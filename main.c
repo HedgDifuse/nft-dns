@@ -1,18 +1,17 @@
-#include <stdlib.h>
-#include <stdio.h>
-#include <string.h>
 #include <stdarg.h>
-#include <sys/types.h>
-#include <sys/socket.h>
-#include <arpa/nameser.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 #include <arpa/inet.h>
-#include <linux/netfilter.h>
-#include <linux/netfilter/nfnetlink.h>
-#include <linux/netfilter/nf_tables.h>
+#include <arpa/nameser.h>
 #include <libmnl/libmnl.h>
 #include <libnftnl/set.h>
-#include "hashset/hashset.h"
+#include <linux/netfilter.h>
+#include <linux/netfilter/nf_tables.h>
+#include <sys/socket.h>
+#include <sys/types.h>
 #include "filedaemon/filedaemon.h"
+#include "hashset/hashset.h"
 
 struct resolv_header {
 	int id;
@@ -389,7 +388,7 @@ int main(int argc, char *argv[])
 
 			struct nftnl_set_elem *element = nftnl_set_elem_alloc();
 
-			if (add_to_ipset(&domains, element, af == AF_INET ? ip4_set : ip6_set,answer.dotted, ip_digit)) {
+			if (add_to_ipset(&domains, element, af == AF_INET ? ip4_set : ip6_set, answer.dotted, ip_digit)) {
 				af == AF_INET ? ip4_size++ : ip6_size++;
 			} else {
 				nftnl_set_elem_free(element);
@@ -414,11 +413,6 @@ int main(int argc, char *argv[])
 					nftnl_set_free(ip4_set);
 					mnl_nlmsg_batch_next(batch);
 				}
-				if (ip6_size > 0) {
-					nftnl_set_elems_nlmsg_build_payload(nlh, ip6_set);
-					nftnl_set_free(ip6_set);
-					mnl_nlmsg_batch_next(batch);
-				}
 
 				nftnl_batch_end(mnl_nlmsg_batch_current(batch), seq++);
 				mnl_nlmsg_batch_next(batch);
@@ -435,6 +429,9 @@ int main(int argc, char *argv[])
 					if (ret <= 0)
 						break;
 					ret = mnl_socket_recvfrom(nl, buf, sizeof(buf));
+				}
+				if (ret == -1) {
+					perror("nft_mnl");
 				}
 			}
 		}

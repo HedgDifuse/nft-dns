@@ -16,7 +16,7 @@
  */
 
 #include "hashset.h"
-#include <assert.h>
+#include "assert.h"
 #include <stdio.h>
 
 

@@ -1,10 +1,9 @@
 //
 // Created by HedgDifuse on 10.10.2024.
 //
+#include "filedaemon.h"
 #include <stdio.h>
 #include <stdlib.h>
-#include "filedaemon.h"
-#include <sys/stat.h>
 #include <string.h>
 #include <unistd.h>
 
@@ -33,28 +32,13 @@ static char *url_only(const char *input, const size_t length) {
 void domains_daemon(const volatile hashset_t *domains) {
     printf("Start domains reading...\n");
 
-    struct timespec prev_file_edit = { 0, 0 };
+    unsigned long previous_size = 0;
 
     for(;;) {
-        struct stat file_stat;
-
-        if (stat(DOMAINS_FILE_PATH, &file_stat) != 0) {
-            perror("stat");
-            sleep(10);
-            continue;
-        }
-
-        if (file_stat.st_mtim.tv_sec <= prev_file_edit.tv_sec) {
-            sleep(1);
-            continue;
-        }
-
-        prev_file_edit = file_stat.st_mtim;
-
         FILE *file = fopen(DOMAINS_FILE_PATH, "r");
 
         if (file == NULL) {
-            sleep(1);
+            sleep(10);
             continue;
         }
 
@@ -75,7 +59,12 @@ void domains_daemon(const volatile hashset_t *domains) {
                 strlen(normalized_domain));
         }
 
-        printf("Domains updated, new count: %lu\n", hashset_num_items(*domains));
+        const unsigned long new_size = hashset_num_items(*domains);
+
+        if (new_size != previous_size) {
+            printf("Domains updated, new count: %lu\n", new_size);
+            previous_size = new_size;
+        }
 
         sleep(1);
     }
