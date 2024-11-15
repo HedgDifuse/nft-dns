@@ -226,7 +226,7 @@ int main(int argc, char *argv[])
 	struct resolv_answer answer;
 	struct timeval tv;
 	char *ipset4, *ipset6;
-	int listen_sock, upstream_sock;
+	int listen_sock;
 	int pos, i, size, af;
 	socklen_t len;
 	size_t received;
@@ -295,12 +295,9 @@ int main(int argc, char *argv[])
 	}
 	inet_aton(up_ip, &upstream_addr.sin_addr);
 
-	upstream_sock = -1;
-
 	for (;;) {
+
 		char msg[512];
-		if (upstream_sock >= 0)
-			shutdown(upstream_sock, SHUT_RDWR);
 
 		len = sizeof(client_addr);
 		received = recvfrom(listen_sock, msg, sizeof(msg), 0, (struct sockaddr *)&client_addr, &len);
@@ -312,25 +309,23 @@ int main(int argc, char *argv[])
 
 		decode_header(msg, &question_header);
 
-		upstream_sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
-		if (upstream_sock < 0) {
-			perror("socket");
-			continue;
-		}
-		tv.tv_sec = 1;
-		tv.tv_usec = 0;
-		setsockopt(upstream_sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+        int upstream_sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+        tv.tv_sec = 1;
+        tv.tv_usec = 0;
+        setsockopt(upstream_sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+
 		if (sendto(upstream_sock, msg, received, 0, (struct sockaddr *)&upstream_addr, sizeof(upstream_addr)) < 0) {
+            close(upstream_sock);
 			perror("sendto");
 			continue;
 		}
 		received = recv(upstream_sock, msg, sizeof(msg), 0);
+        close(upstream_sock);
 
 		if (received < HFIXEDSZ) {
 			fprintf(stderr, "Did not receive full DNS header from upstream.\n");
 			continue;
 		}
-		close(upstream_sock);
 
 		decode_header(msg, &answer_header);
 		if (answer_header.id != question_header.id || !answer_header.qr) {
