@@ -77,6 +77,7 @@ _Noreturn void domains_daemon(const volatile hashset_t *domains) {
             previous_size = new_size;
         }
 
+        fclose(file);
         sleep(1);
     }
 }
