@@ -330,8 +330,7 @@ int main(int argc, char *argv[])
 			fprintf(stderr, "Did not receive full DNS header from upstream.\n");
 			continue;
 		}
-		shutdown(upstream_sock, SHUT_RDWR);
-		upstream_sock = -1;
+		close(upstream_sock);
 
 		decode_header(msg, &answer_header);
 		if (answer_header.id != question_header.id || !answer_header.qr) {
