@@ -46,7 +46,6 @@ struct hashmap_st {
 
 struct hashset_item_st {
     size_t hash;
-    char* item;
 };
 
 struct hashset_st {
@@ -286,7 +285,7 @@ void hashset_set_hash_function(hashset_t set, hash_func_t func)
     set->hash_func = func;
 }
 
-static int hashset_add_member(hashset_t set, char* key, size_t hash)
+static int hashset_add_member(hashset_t set, size_t hash)
 {
     size_t index;
 
@@ -312,7 +311,6 @@ static int hashset_add_member(hashset_t set, char* key, size_t hash)
     }
 
     set->items[index].hash = hash;
-    set->items[index].item = key;
     return 1;
 }
 
@@ -333,16 +331,15 @@ static void set_maybe_rehash(hashset_t set)
         set->n_deleted_items = 0;
         assert(set->items);
         for (index = 0; index < old_capacity; ++index) {
-            hashset_add_member(set, old_items[index].item, old_items[index].hash);
+            hashset_add_member(set, old_items[index].hash);
         }
         free(old_items);
     }
 }
 
-int hashset_add(hashset_t set, char* key, size_t key_len)
+int hashset_add(hashset_t set, size_t hash)
 {
-    size_t hash = set->hash_func(key, key_len);
-    int rv = hashset_add_member(set, key, hash);
+    int rv = hashset_add_member(set, hash);
     set_maybe_rehash(set);
     return rv;
 }
@@ -365,9 +362,8 @@ int hashset_remove(hashset_t set, char* key, size_t key_len)
     return 0;
 }
 
-int hashset_is_member(hashset_t set, char* key, size_t key_len)
+int hashset_is_member(hashset_t set, size_t hash)
 {
-    size_t hash = set->hash_func(key, key_len);
     size_t index = set->mask & (prime_1 * hash);
 
     while (set->items[index].hash != 0) {

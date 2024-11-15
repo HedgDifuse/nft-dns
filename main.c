@@ -11,6 +11,7 @@
 #include <sys/socket.h>
 #include "filedaemon/filedaemon.h"
 #include "hashset/hashset.h"
+#include "hash/hash.h"
 
 struct resolv_header {
 	int id;
@@ -188,20 +189,19 @@ static bool add_to_ipset(
     int af,
 	const union nf_inet_addr *ip
 ) {
-	bool can_process = hashset_is_member(*domains, domain, sizeof(domain));
+	bool can_process = hashset_is_member(*domains, strhash(domain));
 	char *dot_start_domain = concat(2, ".", domain);
 
 	if (!can_process) {
-		can_process = hashset_is_member(*domains, dot_start_domain, sizeof(dot_start_domain));
+		can_process = hashset_is_member(*domains, strhash(dot_start_domain));
 	}
-
     free(dot_start_domain);
 
 	if (!can_process) {
 		for (size_t i = 1; i < strlen(domain); i++) {
 			if (domain[i] != '.') continue;
 
-			if (hashset_is_member(*domains, domain + i, sizeof(domain + i))) {
+			if (hashset_is_member(*domains, strhash(domain + i))) {
 				can_process = true;
 			}
 		}
@@ -212,7 +212,7 @@ static bool add_to_ipset(
     if (af == AF_INET) {
         nftnl_set_elem_set(set_element, NFTNL_SET_ELEM_KEY, &ip->in.s_addr, sizeof(ip->in.s_addr));
     } else {
-        nftnl_set_elem_set(set_element, NFTNL_SET_ELEM_KEY, &ip, sizeof(*ip));
+        nftnl_set_elem_set(set_element, NFTNL_SET_ELEM_KEY, &ip->in6, sizeof(ip->in6));
     }
 	nftnl_set_elem_add(ip_set, set_element);
 
@@ -230,7 +230,6 @@ int main(int argc, char *argv[])
 	int pos, i, size, af;
 	socklen_t len;
 	size_t received;
-	pid_t child;
 	char delim[] = ":";
 	volatile hashset_t domains = hashset_create();
 
@@ -396,8 +395,8 @@ int main(int argc, char *argv[])
 			struct nftnl_set_elem *element = nftnl_set_elem_alloc();
 
 			if (add_to_ipset(&domains, element, af == AF_INET ? ip4_set : ip6_set, answer.dotted, af, &ip_digit)) {
-                if (af == AF_INET) ip4_size++;
-                else ip6_size++;
+                if (af == AF_INET) ip4_size += 1;
+                else ip6_size += 1;
 			} else {
 				nftnl_set_elem_free(element);
 			}
@@ -447,12 +446,10 @@ int main(int argc, char *argv[])
 				ssize_t ret = mnl_socket_recvfrom(nl, buf, sizeof(buf));
 				while (ret > 0) {
 					ret = mnl_cb_run(buf, ret, 0, port_id, NULL, NULL);
-					if (ret <= 0)
-						break;
+					if (ret <= 0) {
+                        break;
+                    }
 					ret = mnl_socket_recvfrom(nl, buf, sizeof(buf));
-				}
-				if (ret == -1) {
-					perror("nft_mnl");
 				}
 			}
 		}

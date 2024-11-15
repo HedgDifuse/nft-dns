@@ -36,7 +36,7 @@ size_t hashset_num_items(hashset_t set);
  *
  * returns zero if the item already in the set and non-zero otherwise
  */
-int hashset_add(hashset_t set, char *key, size_t key_len);
+int hashset_add(hashset_t set, size_t key_len);
 
 /* remove item from the hashset
  *
@@ -49,7 +49,7 @@ int hashset_remove(hashset_t set, char *key, size_t key_len);
  *
  * returns non-zero if the item exists and zero otherwise
  */
-int hashset_is_member(hashset_t set, char *key, size_t key_len);
+int hashset_is_member(hashset_t set, size_t hash);
 
 /* create hashmap instance */
 hashmap_t hashmap_create(void);
