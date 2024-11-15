@@ -29,12 +29,12 @@ static char *url_only(const char *input, const size_t length) {
     return result;
 }
 
-void domains_daemon(const volatile hashset_t *domains) {
+_Noreturn void domains_daemon(const volatile hashset_t *domains) {
     printf("Start domains reading...\n");
 
     unsigned long previous_size = 0;
 
-    for(;;) {
+    while(true) {
         FILE *file = fopen(DOMAINS_FILE_PATH, "r");
 
         if (file == NULL) {
@@ -57,6 +57,8 @@ void domains_daemon(const volatile hashset_t *domains) {
                 *domains,
                 normalized_domain,
                 strlen(normalized_domain));
+
+            free(normalized_domain);
         }
 
         const unsigned long new_size = hashset_num_items(*domains);
@@ -72,7 +74,7 @@ void domains_daemon(const volatile hashset_t *domains) {
 
 pthread_t make_domains_daemon(const volatile hashset_t *domains) {
     pthread_t result;
-    pthread_create(&result, NULL, domains_daemon, (void *) domains);
+    pthread_create(&result, NULL, (void *(*)(void *)) domains_daemon, domains);
 
     return result;
 }

@@ -186,7 +186,8 @@ static bool add_to_ipset(
 	struct nftnl_set_elem *set_element,
 	struct nftnl_set *ip_set,
 	char *domain,
-	const int ip
+    int af,
+	const union nf_inet_addr *ip
 ) {
 	bool can_process = hashset_is_member(*domains, domain, sizeof(domain));
 	char *dot_start_domain = concat(2, ".", domain);
@@ -194,6 +195,8 @@ static bool add_to_ipset(
 	if (!can_process) {
 		can_process = hashset_is_member(*domains, dot_start_domain, sizeof(dot_start_domain));
 	}
+
+    free(dot_start_domain);
 
 	if (!can_process) {
 		for (size_t i = 1; i < strlen(domain); i++) {
@@ -207,7 +210,11 @@ static bool add_to_ipset(
 
 	if (!can_process) return false;
 
-	nftnl_set_elem_set(set_element, NFTNL_SET_ELEM_KEY, &ip, sizeof(ip));
+    if (af == AF_INET) {
+        nftnl_set_elem_set(set_element, NFTNL_SET_ELEM_KEY, &ip->in.s_addr, sizeof(ip->in.s_addr));
+    } else {
+        nftnl_set_elem_set(set_element, NFTNL_SET_ELEM_KEY, &ip, sizeof(*ip));
+    }
 	nftnl_set_elem_add(ip_set, set_element);
 
 	return true;
@@ -349,7 +356,8 @@ int main(int argc, char *argv[])
 		struct nftnl_set *ip4_set = nftnl_set_alloc();
 		struct nftnl_set *ip6_set = nftnl_set_alloc();
 
-		int ip4_size = 0, ip6_size = 0;
+		size_t ip4_size = 0;
+        size_t ip6_size = 0;
 
 		nftnl_set_set_str(ip4_set, NFTNL_SET_TABLE, "fw4");
 		nftnl_set_set_str(ip4_set, NFTNL_SET_NAME, ipset4);
@@ -383,37 +391,51 @@ int main(int argc, char *argv[])
 			if ((af == AF_INET && !*ipset4) || (af == AF_INET6 && !*ipset6))
 				continue;
 
-			int ip_digit;
-			inet_pton(af, ip, &ip_digit);
+            union nf_inet_addr ip_digit;
+            inet_pton(af, ip, &ip_digit);
 
 			struct nftnl_set_elem *element = nftnl_set_elem_alloc();
 
-			if (add_to_ipset(&domains, element, af == AF_INET ? ip4_set : ip6_set, answer.dotted, ip_digit)) {
-				af == AF_INET ? ip4_size++ : ip6_size++;
+			if (add_to_ipset(&domains, element, af == AF_INET ? ip4_set : ip6_set, answer.dotted, af, &ip_digit)) {
+                if (af == AF_INET) ip4_size++;
+                else ip6_size++;
 			} else {
 				nftnl_set_elem_free(element);
 			}
 
-			if (i+1 == answer_header.ancount && (ip4_size > 0 || ip6_size > 0)) {
+			if (i+1 == answer_header.ancount && ip4_size + ip6_size > 0) {
 				int buf[MNL_SOCKET_BUFFER_SIZE];
 				int seq = 0;
 
 				struct mnl_nlmsg_batch *batch = mnl_nlmsg_batch_start(buf, sizeof(buf));
-				nftnl_batch_begin(mnl_nlmsg_batch_current(batch), seq++);
-				mnl_nlmsg_batch_next(batch);
+                nftnl_batch_begin(mnl_nlmsg_batch_current(batch), seq++);
+                mnl_nlmsg_batch_next(batch);
 
-				struct nlmsghdr *nlh = nftnl_nlmsg_build_hdr(mnl_nlmsg_batch_current(batch),
-								NFT_MSG_NEWSETELEM,
-								NFPROTO_INET,
-								NLM_F_CREATE | NLM_F_EXCL | NLM_F_ACK,
-								seq++);
+                if (ip4_size > 0) {
+                    struct nlmsghdr *nlh = nftnl_nlmsg_build_hdr(mnl_nlmsg_batch_current(batch),
+                                                                 NFT_MSG_NEWSETELEM,
+                                                                 NFPROTO_INET,
+                                                                 NLM_F_CREATE | NLM_F_EXCL | NLM_F_ACK,
+                                                                 seq++);
 
-				if (ip4_size > 0) {
-					nftnl_set_elems_nlmsg_build_payload(nlh, ip4_set);
-					nftnl_set_free(ip4_set);
-					mnl_nlmsg_batch_next(batch);
-				}
+                    nftnl_set_elems_nlmsg_build_payload(nlh, ip4_set);
+                    nftnl_set_free(ip4_set);
+                    mnl_nlmsg_batch_next(batch);
+                }
 
+                if (ip6_size > 0) {
+                    struct nlmsghdr *nlh = nftnl_nlmsg_build_hdr(mnl_nlmsg_batch_current(batch),
+                                                                 NFT_MSG_NEWSETELEM,
+                                                                 NFPROTO_INET,
+                                                                 NLM_F_CREATE | NLM_F_EXCL | NLM_F_ACK,
+                                                                 seq++);
+
+                    nftnl_set_elems_nlmsg_build_payload(nlh, ip6_set);
+                    nftnl_set_free(ip6_set);
+                    mnl_nlmsg_batch_next(batch);
+                }
+
+                mnl_nlmsg_batch_next(batch);
 				nftnl_batch_end(mnl_nlmsg_batch_current(batch), seq++);
 				mnl_nlmsg_batch_next(batch);
 
