@@ -34,7 +34,7 @@ _Noreturn void domains_daemon(const volatile hashset_t *domains) {
 
     unsigned long previous_size = 0;
 
-    while(true) {
+    for(;;) {
         FILE *file = fopen(DOMAINS_FILE_PATH, "r");
 
         if (file == NULL) {

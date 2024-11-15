@@ -3,10 +3,8 @@ project(nft-dns C)
 
 set(CMAKE_C_STANDARD 23)
 
-include_directories(
-        $ENV{TARGET_DIR}/usr/include
-        $ENV{TARGET_DIR}/usr/lib
-)
+include_directories($ENV{TARGET_DIR}/usr/include)
+link_directories($ENV{TARGET_DIR}/usr/lib)
 
 link_libraries(nftnl mnl)
 

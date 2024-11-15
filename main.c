@@ -9,7 +9,6 @@
 #include <linux/netfilter.h>
 #include <linux/netfilter/nf_tables.h>
 #include <sys/socket.h>
-#include <sys/types.h>
 #include "filedaemon/filedaemon.h"
 #include "hashset/hashset.h"
 
