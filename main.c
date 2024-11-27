@@ -13,6 +13,8 @@
 #include "hashset/hashset.h"
 #include "hash/hash.h"
 
+#pragma clang diagnostic push
+#pragma ide diagnostic ignored "ConstantParameter"
 struct resolv_header {
 	int id;
 	int qr, opcode, aa, tc, rd, ra, rcode;
@@ -160,14 +162,14 @@ static char* concat(int count, ...)
 	va_list ap;
 	int i;
 
-	int len = 1;
+	size_t len = 1;
 	va_start(ap, count);
 	for(i=0 ; i<count ; i++)
 		len += strlen(va_arg(ap, char*));
 	va_end(ap);
 
 	char *merged = calloc(sizeof(char),len);
-	int null_pos = 0;
+	size_t null_pos = 0;
 
 	va_start(ap, count);
 	for(i=0 ; i<count ; i++)
@@ -295,8 +297,9 @@ int main(int argc, char *argv[])
 	}
 	inet_aton(up_ip, &upstream_addr.sin_addr);
 
-	for (;;) {
+    int upstream_sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
 
+	for (;;) {
 		char msg[512];
 
 		len = sizeof(client_addr);
@@ -309,18 +312,11 @@ int main(int argc, char *argv[])
 
 		decode_header(msg, &question_header);
 
-        int upstream_sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
-        tv.tv_sec = 1;
-        tv.tv_usec = 0;
-        setsockopt(upstream_sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
-
 		if (sendto(upstream_sock, msg, received, 0, (struct sockaddr *)&upstream_addr, sizeof(upstream_addr)) < 0) {
-            close(upstream_sock);
 			perror("sendto");
 			continue;
 		}
 		received = recv(upstream_sock, msg, sizeof(msg), 0);
-        close(upstream_sock);
 
 		if (received < HFIXEDSZ) {
 			fprintf(stderr, "Did not receive full DNS header from upstream.\n");
@@ -453,3 +449,5 @@ int main(int argc, char *argv[])
 			perror("sendto");
 	}
 }
+
+#pragma clang diagnostic pop

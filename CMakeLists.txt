@@ -14,11 +14,13 @@ link_directories(
 
 link_libraries(nftnl mnl)
 
-add_executable(nft-dns main.c
+add_executable(nft-dns new-main.c
         hashset/hashset.h
         hashset/hashset.c
         filedaemon/filedaemon.h
         filedaemon/filedaemon.c
         hash/hash.h
         hash/hash.c
+        dns_packet/dns_packet.c
+        dns_packet/dns_packet.h
 )
