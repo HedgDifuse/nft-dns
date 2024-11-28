@@ -3,45 +3,14 @@
 #include <stdio.h>
 #include <getopt.h>
 #include <string.h>
-#include <arpa/inet.h>
 #include <stdlib.h>
-#include "dns_packet/dns_packet.h"
+#include "dns_packet/dns_parse_utils.h"
+#include "dns_socket/dns_socket.h"
 
 static const struct option options[] = {
-        {"listen", true, nullptr, 0},
-        {"dns",    true, nullptr, 0}
+        {"listen", true, NULL, 0},
+        {"dns",    true, NULL, 0}
 };
-
-int make_dns_socket(char *address_and_port, bool self) {
-    int descriptor = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
-
-    if (!descriptor) return -1;
-
-    struct sockaddr_in address;
-
-    inet_pton(AF_INET, strtok(address_and_port, ":"), &address.sin_addr);
-
-    char *port = strtok(nullptr, ":");
-    address.sin_port = htons(port ? strtol(port, nullptr, 10) : 53);
-    address.sin_family = AF_INET;
-
-    int reuse_addr = 1;
-    if (setsockopt(descriptor, SOL_SOCKET, SO_REUSEADDR, &reuse_addr, sizeof(reuse_addr)) < 0) {
-        perror("setsockopt");
-        return -1;
-    }
-
-    if (self && bind(descriptor, (const struct sockaddr *) &address, sizeof(address)) < 0) {
-        perror("bind");
-        return -1;
-    }
-    if (!self && connect(descriptor, (const struct sockaddr *) &address, sizeof(address)) < 0) {
-        perror("connect");
-        return -1;
-    }
-
-    return descriptor;
-}
 
 int main(int argc, char *argv[]) {
     int listen_sock,
@@ -67,7 +36,7 @@ int main(int argc, char *argv[]) {
     struct sockaddr_in client_addr;
 
     while (true) {
-        char msg[512];
+        unsigned char msg[DNS_PACKET_MAX_LENGTH];
         size_t received;
 
         fflush(stdout);
@@ -91,14 +60,17 @@ int main(int argc, char *argv[]) {
             continue;
         }
 
-        struct dns_packet packet = {};
-        printf("Parse: %d\n", dns_packet_parse(received, msg, &packet));
-
-        printf("Answer: \n");
-        for (int i = 0; i < received; i++) {
-            printf("%02hhX ", msg[i]);
+        printf("Packet start\n");
+        for (size_t i = 0; i < received; i++) {
+            printf("%02hhx ", msg[i]);
         }
-        printf("\n\n\n");
+        printf("\nPacket end\n");
+
+        struct dns_packet packet = {};
+
+        if (dns_packet_parse(received, msg, &packet) != -1) {
+
+        }
 
         if (sendto(listen_sock, msg, received, 0,
                    (struct sockaddr *) &client_addr,

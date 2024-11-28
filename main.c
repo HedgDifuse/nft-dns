@@ -8,6 +8,7 @@
 #include <libnftnl/set.h>
 #include <linux/netfilter.h>
 #include <linux/netfilter/nf_tables.h>
+#include <nss.h>
 #include <sys/socket.h>
 #include "filedaemon/filedaemon.h"
 #include "hashset/hashset.h"
@@ -297,7 +298,6 @@ int main(int argc, char *argv[])
 	}
 	inet_aton(up_ip, &upstream_addr.sin_addr);
 
-    int upstream_sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
 
 	for (;;) {
 		char msg[512];
@@ -312,11 +312,14 @@ int main(int argc, char *argv[])
 
 		decode_header(msg, &question_header);
 
+        int upstream_sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
 		if (sendto(upstream_sock, msg, received, 0, (struct sockaddr *)&upstream_addr, sizeof(upstream_addr)) < 0) {
+            close(upstream_sock);
 			perror("sendto");
 			continue;
 		}
 		received = recv(upstream_sock, msg, sizeof(msg), 0);
+        close(upstream_sock);
 
 		if (received < HFIXEDSZ) {
 			fprintf(stderr, "Did not receive full DNS header from upstream.\n");
