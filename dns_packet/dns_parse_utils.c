@@ -9,7 +9,7 @@ char *dns_parse_domain(
         const unsigned char raw_packet[],
         size_t *index
 ) {
-    char *domain = NULL;
+    char *domain = nullptr;
     size_t prev_size = 0,
             segment_count = 0,
             i = *index;
@@ -110,8 +110,10 @@ char *dns_parse_rdata(
 
             break;
         case CNAME:
-            return dns_parse_domain(DNS_PACKET_MAX_LENGTH - *index, rdata_length, rdata, index);
-
+            return dns_parse_domain(
+                    DNS_PACKET_MAX_LENGTH - *index,
+                    rdata_length,
+                    rdata, index);
         default:
             i += rdata_length;
             break;
