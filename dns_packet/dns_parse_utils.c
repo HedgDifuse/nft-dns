@@ -122,25 +122,37 @@ char *dns_parse_rdata(
     return result;
 }
 
+size_t merge_octets(size_t count, const unsigned char octets[], size_t *index) {
+    size_t result = 0;
+
+    for (size_t i = 0; i < count; i++) {
+        result *= 0x100;
+        result += octets[i];
+    }
+
+    if (index != NULL) *index += count;
+
+    return result;
+}
+
 int dns_packet_parse(size_t packet_length, const unsigned char raw_packet[], struct dns_packet *result) {
     if (packet_length < 12) return -1;
 
     result->transaction_id[0] = raw_packet[0];
     result->transaction_id[1] = raw_packet[1];
 
-    /*int flags = raw_packet[2] * 0x100 + raw_packet[3];
+    size_t flags = merge_octets(2, raw_packet + 2, NULL);
 
-    result->is_answer = (flags <<= 1) & 0b1;
-    result->opcode = (flags <<= 4) & 0b1111;
-    result->server_in_priority = (flags <<= 1) & 0b1;
-    result->all_in_one = (flags <<= 1) & 0b1;
-    result->ip_only = (flags <<= 1) & 0b1;
-    result->recursion_support = (flags <<= 1) & 0b1;
-    flags <<= 3; // Reserved field
-    result->return_code = (flags <<= 4) & 0b1111;*/
+    result->return_code = flags & 0b1111;
+    result->recursion_support = (flags >> 7) & 0b1;
+    result->ip_only = (flags >> 8) & 0b1;
+    result->all_in_one = (flags >> 9) & 0b1;
+    result->server_in_priority = (flags >> 10) & 0b1;
+    result->opcode = (flags >> 11) & 0b1111;
+    result->is_answer = (flags >> 15) & 0b1;
 
-    result->questions_count = raw_packet[4] * 0x100 + raw_packet[5];
-    result->answers_count = raw_packet[6] * 0x100 + raw_packet[7];
+    result->questions_count = merge_octets(2, raw_packet + 4, NULL);
+    result->answers_count = merge_octets(2, raw_packet + 6, NULL);
     uint16_t ns_count = raw_packet[8] * 0x100 + raw_packet[9];
     uint16_t ar_count = raw_packet[10] * 0x100 + raw_packet[11];
 
@@ -152,11 +164,8 @@ int dns_packet_parse(size_t packet_length, const unsigned char raw_packet[], str
     for (size_t j = 0; j < result->questions_count; j++) {
         char *domain = dns_parse_domain(packet_length, packet_length, raw_packet, &i);
         i++;
-        uint16_t q_type = raw_packet[i++] * 0x100;
-        q_type += raw_packet[i++];
-
-        uint16_t q_class = raw_packet[i++] * 0x100;
-        q_class += raw_packet[i++];
+        uint16_t q_type = merge_octets(2, raw_packet + i, &i);
+        uint16_t q_class = merge_octets(2, raw_packet + i, &i);
 
         result->questions[j] = (struct dns_question) {
             q_type,
@@ -168,21 +177,10 @@ int dns_packet_parse(size_t packet_length, const unsigned char raw_packet[], str
     for (size_t j = 0; j < result->answers_count; j++) {
         char *domain = dns_parse_domain(packet_length, packet_length, raw_packet, &i);
         i++;
-        dns_record_type type = raw_packet[i++] * 0x100;
-        type += raw_packet[i++];
-
-        unsigned short class = raw_packet[i++] * 0x100;
-        class += raw_packet[i++];
-
-        unsigned long ttl = raw_packet[i++] * 0x100;
-        ttl += raw_packet[i++];
-        ttl *= 0x100;
-        ttl += raw_packet[i++];
-        ttl *= 0x100;
-        ttl += raw_packet[i++];
-
-        uint16_t rdata_size = raw_packet[i++] * 0x100;
-        rdata_size += raw_packet[i++];
+        dns_record_type type = merge_octets(2, raw_packet + i, &i);
+        unsigned short class = merge_octets(2, raw_packet + i, &i);
+        unsigned long ttl = merge_octets(4, raw_packet + i, &i);
+        uint16_t rdata_size = merge_octets(2, raw_packet + i, &i);
 
         char *rdata = dns_parse_rdata(rdata_size, raw_packet, &i, type);
 
