@@ -71,7 +71,6 @@ char *dns_parse_rdata(
     switch (type) {
         case A:
             while (i < (rdata_length + *index)) {
-                printf("i: %d\n", i);
                 bool last_segment = i + 1 == rdata_length + *index;
                 char segment[4];
                 snprintf(segment, 4, "%d", rdata[i]);
@@ -94,7 +93,6 @@ char *dns_parse_rdata(
             break;
         case AAAA:
             while (i+1 < (rdata_length + *index)) {
-                printf("i6: %d\n", i);
                 bool last_segment = i + 2 >= rdata_length + *index;
 
                 char segment[5];
