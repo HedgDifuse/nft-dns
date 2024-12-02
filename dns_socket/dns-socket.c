@@ -3,6 +3,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
+#include <stdbool.h>
 
 int make_dns_socket(char *address_and_port, bool self) {
     int descriptor = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);

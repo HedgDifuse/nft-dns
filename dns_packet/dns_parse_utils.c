@@ -2,14 +2,15 @@
 #include <string.h>
 #include <stdio.h>
 #include <malloc.h>
+#include <stdlib.h>
 
 char *dns_parse_domain(
-        size_t packet_length,
-        size_t max_segment_count,
+        const size_t packet_length,
+        const size_t max_segment_count,
         const unsigned char raw_packet[],
         size_t *index
 ) {
-    char *domain = nullptr;
+    char *domain = NULL;
     size_t prev_size = 0,
             segment_count = 0,
             i = *index;
@@ -20,13 +21,13 @@ char *dns_parse_domain(
          * L = flags
          * S = size
          */
-        unsigned char size = raw_packet[i++];
+        const unsigned char size = raw_packet[i++];
+        const size_t link_index = (size >> 6) == 0b11 ? (size - 0b11000000) * 0x100 + i : -1;
+        const bool add_dot = domain != NULL;
 
-        size_t link_index = (size >> 6) == 0b11 ? (size - 0b11000000) * 0x100 + i : -1;
-
-        bool add_dot = domain != NULL;
-
-        domain = realloc(domain, sizeof(*domain) + ((size + add_dot) * sizeof(char)));
+        domain = domain != NULL
+            ? reallocarray(domain, (prev_size + size + add_dot), sizeof(char))
+            : calloc(size + add_dot, sizeof(char));
 
         if (add_dot) {
             (domain + prev_size)[0] = '.';
@@ -58,10 +59,10 @@ char *dns_parse_domain(
 }
 
 char *dns_parse_rdata(
-        size_t rdata_length,
+        const size_t rdata_length,
         const unsigned char rdata[],
         size_t *index,
-        dns_record_type type
+        const dns_record_type type
 ) {
     size_t i = *index;
     size_t result_size = 0;
@@ -166,8 +167,8 @@ int dns_packet_parse(size_t packet_length, const unsigned char raw_packet[], str
     for (size_t j = 0; j < result->questions_count; j++) {
         char *domain = dns_parse_domain(packet_length, packet_length, raw_packet, &i);
         i++;
-        uint16_t q_type = merge_octets(2, raw_packet + i, &i);
-        uint16_t q_class = merge_octets(2, raw_packet + i, &i);
+        const uint16_t q_type = merge_octets(2, raw_packet + i, &i);
+        const uint16_t q_class = merge_octets(2, raw_packet + i, &i);
 
         result->questions[j] = (struct dns_question) {
             q_type,
@@ -179,14 +180,12 @@ int dns_packet_parse(size_t packet_length, const unsigned char raw_packet[], str
     for (size_t j = 0; j < result->answers_count; j++) {
         char *domain = dns_parse_domain(packet_length, packet_length, raw_packet, &i);
         i++;
-        dns_record_type type = merge_octets(2, raw_packet + i, &i);
-        unsigned short class = merge_octets(2, raw_packet + i, &i);
-        unsigned long ttl = merge_octets(4, raw_packet + i, &i);
-        uint16_t rdata_size = merge_octets(2, raw_packet + i, &i);
+        const dns_record_type type = merge_octets(2, raw_packet + i, &i);
+        const unsigned short class = merge_octets(2, raw_packet + i, &i);
+        const unsigned long ttl = merge_octets(4, raw_packet + i, &i);
+        const uint16_t rdata_size = merge_octets(2, raw_packet + i, &i);
 
         char *rdata = dns_parse_rdata(rdata_size, raw_packet, &i, type);
-
-        printf("domain %s, rdata: %s\n", domain, rdata);
 
         result->answers[j] = (struct dns_answer) {
             type,
