@@ -15,7 +15,7 @@ char *dns_parse_domain(
             segment_count = 0,
             i = *index;
 
-    while ((i < packet_length || segment_count < max_segment_count) && raw_packet[i] != 0x00) {
+    while (i < packet_length && segment_count < max_segment_count && raw_packet[i] != 0x00) {
         /*
          * Structure: 0xLLSSSSSS
          * L = flags
@@ -62,7 +62,7 @@ char *dns_parse_rdata(
         const size_t rdata_length,
         const unsigned char rdata[],
         size_t *index,
-        const dns_record_type type
+        const unsigned short type
 ) {
     size_t i = *index;
     size_t result_size = 0;
@@ -71,11 +71,15 @@ char *dns_parse_rdata(
     switch (type) {
         case A:
             while (i < (rdata_length + *index)) {
+                printf("i: %d\n", i);
                 bool last_segment = i + 1 == rdata_length + *index;
                 char segment[4];
                 snprintf(segment, 4, "%d", rdata[i]);
 
-                result = realloc(result, (result_size + strlen(segment) + !last_segment) * sizeof(char));
+                result = result != NULL
+                    ? reallocarray(result, result_size + strlen(segment) + !last_segment, sizeof(char))
+                    : calloc(result_size + strlen(segment) + !last_segment, sizeof(char));
+
                 for (size_t j = 0; j < strlen(segment); j++) {
                     (result + result_size)[j] = segment[j];
                 }
@@ -90,6 +94,7 @@ char *dns_parse_rdata(
             break;
         case AAAA:
             while (i+1 < (rdata_length + *index)) {
+                printf("i6: %d\n", i);
                 bool last_segment = i + 2 >= rdata_length + *index;
 
                 char segment[5];
@@ -180,7 +185,7 @@ int dns_packet_parse(size_t packet_length, const unsigned char raw_packet[], str
     for (size_t j = 0; j < result->answers_count; j++) {
         char *domain = dns_parse_domain(packet_length, packet_length, raw_packet, &i);
         i++;
-        const dns_record_type type = merge_octets(2, raw_packet + i, &i);
+        const unsigned short type = merge_octets(2, raw_packet + i, &i);
         const unsigned short class = merge_octets(2, raw_packet + i, &i);
         const unsigned long ttl = merge_octets(4, raw_packet + i, &i);
         const uint16_t rdata_size = merge_octets(2, raw_packet + i, &i);

@@ -35,7 +35,7 @@ bool add_to_ipset(
 ) {
     char *domain = cname != NULL ? cname->domain : answer.domain;
     bool can_process = hashset_is_member(*domains, strhash(domain));
-    char *dot_start_domain = malloc(sizeof(domain) + sizeof(char));
+    char *dot_start_domain = calloc(strlen(domain) + 1, sizeof(char));
 
     strcpy(dot_start_domain + 1, domain);
     dot_start_domain[0] = '.';
@@ -54,9 +54,7 @@ bool add_to_ipset(
             }
         }
     }
-
     if (!can_process) return false;
-
 
     union nf_inet_addr ip;
     inet_pton(answer.type == A ? AF_INET : AF_INET6, answer.data, &ip);
@@ -195,8 +193,6 @@ int main(const int argc, char *argv[]) {
     while (true) {
         unsigned char msg[DNS_PACKET_MAX_LENGTH];
         size_t received;
-
-        fflush(stdout);
 
         socklen_t client_addr_len = sizeof(client_addr);
 

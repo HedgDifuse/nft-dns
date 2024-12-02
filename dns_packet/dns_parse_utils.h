@@ -13,7 +13,7 @@ char *dns_parse_rdata(
         size_t rdata_length,
         const unsigned char rdata[],
         size_t *index,
-        dns_record_type type
+        unsigned short type
 );
 
 int dns_packet_parse(size_t packet_length, const unsigned char raw_packet[], struct dns_packet *result);

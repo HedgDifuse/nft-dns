@@ -32,7 +32,7 @@ struct dns_question {
 };
 
 struct dns_answer {
-    dns_record_type type;
+    unsigned short type;
     unsigned short class;
     unsigned long ttl;
     char *domain;
