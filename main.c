@@ -34,8 +34,10 @@ bool add_to_ipset(
     const struct dns_answer answer
 ) {
     char *domain = cname != NULL ? cname->domain : answer.domain;
+    if (domain == NULL) return false;
+
     bool can_process = hashset_is_member(*domains, strhash(domain));
-    char *dot_start_domain = calloc(strlen(domain) + 1, sizeof(char));
+    char *dot_start_domain = calloc(strlen(domain) + 2, sizeof(char));
 
     strcpy(dot_start_domain + 1, domain);
     dot_start_domain[0] = '.';
@@ -231,6 +233,10 @@ int main(const int argc, char *argv[]) {
             const struct dns_answer *cname = NULL;
 
             for (int i = 0; i < packet.answers_count; i++) {
+                if (debug) {
+                    printf("domain: %s, rdata: %s\n", packet.answers[i].domain, packet.answers[i].data);
+                }
+
                 if (packet.answers[i].type == CNAME) {
                     cname = &packet.answers[i];
                     continue;

@@ -1,6 +1,3 @@
-//
-// Created by HedgDifuse on 10.10.2024.
-//
 #pragma once
 #include <pthread.h>
 #include "../hashset/hashset.h"

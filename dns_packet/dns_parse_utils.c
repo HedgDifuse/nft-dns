@@ -5,10 +5,11 @@
 #include <stdlib.h>
 
 char *dns_parse_domain(
-        const size_t packet_length,
-        const size_t max_segment_count,
-        const unsigned char raw_packet[],
-        size_t *index
+    const size_t packet_length,
+    const size_t max_segment_count,
+    const unsigned char raw_packet[],
+    size_t *index,
+    const size_t max_recursion_depth
 ) {
     char *domain = NULL;
     size_t prev_size = 0,
@@ -25,17 +26,21 @@ char *dns_parse_domain(
         const size_t link_index = (size >> 6) == 0b11 ? (size - 0b11000000) * 0x100 + i : -1;
         const bool add_dot = domain != NULL;
 
+        if (link_index == -1 && size >= packet_length) break;
+
         domain = domain != NULL
-            ? reallocarray(domain, (prev_size + size + add_dot), sizeof(char))
-            : calloc(size + add_dot, sizeof(char));
+                     ? reallocarray(domain, (prev_size + size + add_dot), sizeof(char))
+                     : calloc(size + add_dot, sizeof(char));
 
         if (add_dot) {
             (domain + prev_size)[0] = '.';
         }
 
         if (link_index != -1) {
+            if (link_index >= packet_length || max_recursion_depth == 0) break;
+
             size_t j = raw_packet[link_index];
-            char *link = dns_parse_domain(packet_length, max_segment_count, raw_packet, &j);
+            char *link = dns_parse_domain(packet_length, max_segment_count, raw_packet, &j, max_recursion_depth - 1);
 
             for (j = 0; j < strlen(link); j++) {
                 (domain + prev_size + add_dot)[j] = link[j];
@@ -59,10 +64,10 @@ char *dns_parse_domain(
 }
 
 char *dns_parse_rdata(
-        const size_t rdata_length,
-        const unsigned char rdata[],
-        size_t *index,
-        const unsigned short type
+    const size_t rdata_length,
+    const unsigned char rdata[],
+    size_t *index,
+    const unsigned short type
 ) {
     size_t i = *index;
     size_t result_size = 0;
@@ -76,8 +81,8 @@ char *dns_parse_rdata(
                 snprintf(segment, 4, "%d", rdata[i]);
 
                 result = result != NULL
-                    ? reallocarray(result, result_size + strlen(segment) + !last_segment, sizeof(char))
-                    : calloc(result_size + strlen(segment) + !last_segment, sizeof(char));
+                             ? reallocarray(result, result_size + strlen(segment) + !last_segment, sizeof(char))
+                             : calloc(result_size + strlen(segment) + !last_segment, sizeof(char));
 
                 for (size_t j = 0; j < strlen(segment); j++) {
                     (result + result_size)[j] = segment[j];
@@ -92,14 +97,16 @@ char *dns_parse_rdata(
 
             break;
         case AAAA:
-            while (i+1 < (rdata_length + *index)) {
+            while (i + 1 < (rdata_length + *index)) {
                 bool last_segment = i + 2 >= rdata_length + *index;
 
                 char segment[5];
                 snprintf(segment, 3, "%02hhx", rdata[i]);
-                snprintf(segment + 2, 3, "%02hhx", rdata[i+1]);
+                snprintf(segment + 2, 3, "%02hhx", rdata[i + 1]);
 
-                result = realloc(result, (result_size + strlen(segment) + !last_segment) * sizeof(char));
+                result = result != NULL
+                    ? realloc(result, (result_size + strlen(segment) + !last_segment) * sizeof(char))
+                    : calloc(result_size + strlen(segment) + !last_segment, sizeof(char));
                 for (size_t j = 0; j < strlen(segment); j++) {
                     (result + result_size)[j] = segment[j];
                 }
@@ -115,9 +122,11 @@ char *dns_parse_rdata(
             break;
         case CNAME:
             return dns_parse_domain(
-                    DNS_PACKET_MAX_LENGTH - *index,
-                    rdata_length,
-                    rdata, index);
+                DNS_PACKET_MAX_LENGTH - *index,
+                rdata_length,
+                rdata, index,
+                DEFAULT_DNS_RECURSION_DEPTH
+            );
         default:
             i += rdata_length;
             break;
@@ -128,7 +137,7 @@ char *dns_parse_rdata(
     return result;
 }
 
-size_t merge_octets(size_t count, const unsigned char octets[], size_t *index) {
+size_t merge_octets(const size_t count, const unsigned char octets[], size_t *index) {
     size_t result = 0;
 
     for (size_t i = 0; i < count; i++) {
@@ -159,8 +168,8 @@ int dns_packet_parse(size_t packet_length, const unsigned char raw_packet[], str
 
     result->questions_count = merge_octets(2, raw_packet + 4, NULL);
     result->answers_count = merge_octets(2, raw_packet + 6, NULL);
-    uint16_t ns_count = raw_packet[8] * 0x100 + raw_packet[9];
-    uint16_t ar_count = raw_packet[10] * 0x100 + raw_packet[11];
+    unsigned short ns_count = raw_packet[8] * 0x100 + raw_packet[9];
+    unsigned short ar_count = raw_packet[10] * 0x100 + raw_packet[11];
 
     size_t i = 12;
 
@@ -168,12 +177,12 @@ int dns_packet_parse(size_t packet_length, const unsigned char raw_packet[], str
     result->answers = calloc(result->answers_count, sizeof(struct dns_answer));
 
     for (size_t j = 0; j < result->questions_count; j++) {
-        char *domain = dns_parse_domain(packet_length, packet_length, raw_packet, &i);
+        char *domain = dns_parse_domain(packet_length, packet_length, raw_packet, &i, DEFAULT_DNS_RECURSION_DEPTH);
         i++;
-        const uint16_t q_type = merge_octets(2, raw_packet + i, &i);
-        const uint16_t q_class = merge_octets(2, raw_packet + i, &i);
+        const unsigned short q_type = merge_octets(2, raw_packet + i, &i);
+        const unsigned short q_class = merge_octets(2, raw_packet + i, &i);
 
-        result->questions[j] = (struct dns_question) {
+        result->questions[j] = (struct dns_question){
             q_type,
             q_class,
             domain
@@ -181,16 +190,16 @@ int dns_packet_parse(size_t packet_length, const unsigned char raw_packet[], str
     }
 
     for (size_t j = 0; j < result->answers_count; j++) {
-        char *domain = dns_parse_domain(packet_length, packet_length, raw_packet, &i);
+        char *domain = dns_parse_domain(packet_length, packet_length, raw_packet, &i, DEFAULT_DNS_RECURSION_DEPTH);
         i++;
         const unsigned short type = merge_octets(2, raw_packet + i, &i);
         const unsigned short class = merge_octets(2, raw_packet + i, &i);
         const unsigned long ttl = merge_octets(4, raw_packet + i, &i);
-        const uint16_t rdata_size = merge_octets(2, raw_packet + i, &i);
+        const unsigned short rdata_size = merge_octets(2, raw_packet + i, &i);
 
         char *rdata = dns_parse_rdata(rdata_size, raw_packet, &i, type);
 
-        result->answers[j] = (struct dns_answer) {
+        result->answers[j] = (struct dns_answer){
             type,
             class,
             ttl,

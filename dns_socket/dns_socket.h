@@ -1,4 +1,3 @@
-
 #ifndef NFT_DNS_DNS_SOCKET_H
 #define NFT_DNS_DNS_SOCKET_H
 

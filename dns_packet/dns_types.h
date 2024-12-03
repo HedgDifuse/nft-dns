@@ -1,7 +1,8 @@
 #pragma once
-#include <glob.h>
-#include <stdint-gcc.h>
 #include "stdbool.h"
+
+#ifndef NFT_DNS_TYPES_H
+#define NFT_DNS_TYPES_H
 
 #define DNS_PACKET_MAX_LENGTH 512
 
@@ -42,7 +43,7 @@ struct dns_answer {
 struct dns_packet {
     unsigned char transaction_id[2];
     bool is_answer;
-    uint8_t opcode;
+    unsigned char opcode;
     bool server_in_priority;
     bool all_in_one;
     bool ip_only;
@@ -55,3 +56,5 @@ struct dns_packet {
     struct dns_question *questions;
     struct dns_answer *answers;
 };
+
+#endif //NFT_DNS_TYPES_H

@@ -6,7 +6,7 @@
 #include <stdbool.h>
 
 int make_dns_socket(char *address_and_port, bool self) {
-    int descriptor = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    const int descriptor = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
 
     if (!descriptor) return -1;
 
@@ -14,11 +14,11 @@ int make_dns_socket(char *address_and_port, bool self) {
 
     inet_pton(AF_INET, strtok(address_and_port, ":"), &address.sin_addr);
 
-    char *port = strtok(NULL, ":");
+    const char *port = strtok(NULL, ":");
     address.sin_port = htons(port ? strtol(port, NULL, 10) : 53);
     address.sin_family = AF_INET;
 
-    int reuse_addr = 1;
+    const int reuse_addr = 1;
     if (setsockopt(descriptor, SOL_SOCKET, SO_REUSEADDR, &reuse_addr, sizeof(reuse_addr)) < 0) {
         perror("setsockopt");
         return -1;

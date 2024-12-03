@@ -18,7 +18,7 @@ static char *url_only(const char *input, const size_t length) {
         if ((int) input[i] >= 0x20 && (int) input[i] <= 0x7E) result_length++;
     }
 
-    char *result = malloc(result_length * sizeof(char));
+    char *result = calloc(result_length, sizeof(char));
     unsigned long j = 0;
 
     for (size_t i = 0; i < length; i++) {
@@ -64,7 +64,7 @@ _Noreturn void domains_daemon(const volatile hashset_t *domains) {
 
             char* link = url_only(line, strlen(line) - 1);
             char* normalized_domain = link;
-            if (line[1] == '.') normalized_domain++;
+            if (line[1] == '.' || line[0] == '.') normalized_domain++;
 
             hashset_add(*domains, strhash(normalized_domain));
             free(link);
