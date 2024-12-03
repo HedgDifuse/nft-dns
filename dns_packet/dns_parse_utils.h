@@ -28,4 +28,6 @@ int dns_packet_parse(
     struct dns_packet *result
 );
 
+void dns_packet_free(const struct dns_packet *packet);
+
 #endif //NFT_PARSE_UTILS_H

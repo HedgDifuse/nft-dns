@@ -146,7 +146,7 @@ int main(const int argc, char *argv[]) {
             option_index = 0;
 
     char *ipv4_name = NULL,
-         *ipv6_name = NULL;
+            *ipv6_name = NULL;
 
     while (getopt_long(argc, argv, "l:u:f:s:d", options, &option_index) >= 0) {
         switch (option_index) {
@@ -171,7 +171,8 @@ int main(const int argc, char *argv[]) {
     }
 
     if (listen_sock == -1 || upstream_sock == -1) {
-        fprintf(stderr, "Usage: nft-dns --listen addr[:port] --dns addr[:port] --ip4_set name --ip6_set name [--debug]\n");
+        fprintf(
+            stderr, "Usage: nft-dns --listen addr[:port] --dns addr[:port] --ip4_set name --ip6_set name [--debug]\n");
         exit(EXIT_FAILURE);
     }
 
@@ -247,10 +248,10 @@ int main(const int argc, char *argv[]) {
                 const bool ipv4 = packet.answers[i].type == A;
 
                 if (!add_to_ipset(
-                    &domains,
-                    ipv4 ? ip4_set : ip6_set,
-                    set_element,
-                    cname, packet.answers[i])
+                        &domains,
+                        ipv4 ? ip4_set : ip6_set,
+                        set_element,
+                        cname, packet.answers[i])
                 ) {
                     nftnl_set_elem_free(set_element);
                     continue;
@@ -263,13 +264,14 @@ int main(const int argc, char *argv[]) {
                 }
             }
 
-            if (ip4_size == 0 && ip6_size == 0) {
-                nftnl_set_free(ip4_set);
-                nftnl_set_free(ip6_set);
-            } else {
+            if (ip4_size != 0 || ip6_size != 0) {
                 update_ipset(ip4_set, ip6_set, ip4_size, ip6_size, nl, port_id, ipv4_name, ipv6_name);
             }
+
+            if (ip4_size == 0) nftnl_set_free(ip4_set);
+            if (ip6_size == 0) nftnl_set_free(ip6_set);
         }
+        dns_packet_free(&packet);
 
         if (sendto(listen_sock, msg, received, 0,
                    (struct sockaddr *) &client_addr,

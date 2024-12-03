@@ -24,7 +24,6 @@ add_executable(nft-dns main.c
         dns_packet/dns_types.h
         dns_packet/dns_parse_utils.h
         dns_packet/dns_parse_utils.c
-        dns_packet/dns_types.h
         dns_socket/dns_socket.h
         dns_socket/dns-socket.c
 )

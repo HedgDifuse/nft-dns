@@ -197,18 +197,30 @@ int dns_packet_parse(size_t packet_length, const unsigned char raw_packet[], str
         const unsigned long ttl = merge_octets(4, raw_packet + i, &i);
         const unsigned short rdata_size = merge_octets(2, raw_packet + i, &i);
 
-        char *rdata = dns_parse_rdata(rdata_size, raw_packet, &i, type);
-
         result->answers[j] = (struct dns_answer){
             type,
             class,
             ttl,
             domain,
-            rdata
+            dns_parse_rdata(rdata_size, raw_packet, &i, type)
         };
 
         i++;
     }
 
     return 0;
+}
+
+void dns_packet_free(const struct dns_packet *packet) {
+    for (int i = 0; i < packet->questions_count; i++) {
+        free(packet->questions[i].domain);
+    }
+
+    for (int i = 0; i < packet->answers_count; i++) {
+        free(packet->answers[i].domain);
+        free(packet->answers[i].data);
+    }
+
+    free(packet->questions);
+    free(packet->answers);
 }
