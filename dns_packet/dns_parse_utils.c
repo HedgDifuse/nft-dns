@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <malloc.h>
 #include <stdlib.h>
+#include <unistd.h>
 
 char *dns_parse_domain(
     const size_t packet_length,
@@ -29,30 +30,28 @@ char *dns_parse_domain(
         if (link_index == -1 && size >= packet_length) break;
 
         domain = domain != NULL
-                     ? reallocarray(domain, (prev_size + size + add_dot), sizeof(char))
-                     : calloc(size + add_dot, sizeof(char));
+                 ? reallocarray(domain, (link_index == -1 ? size : 0) + prev_size + add_dot + 1, sizeof(char))
+                 : calloc((link_index == -1 ? size : 0) + add_dot + 1, sizeof(char));
 
         if (add_dot) {
-            (domain + prev_size)[0] = '.';
+            strncat(domain + prev_size, ".", 1);
         }
 
         if (link_index != -1) {
             if (link_index >= packet_length || max_recursion_depth == 0) break;
 
             size_t j = raw_packet[link_index];
-            char *link = dns_parse_domain(packet_length, max_segment_count, raw_packet, &j, max_recursion_depth - 1);
+            const char *link = dns_parse_domain(packet_length, max_segment_count, raw_packet, &j, max_recursion_depth - 1);
 
-            for (j = 0; j < strlen(link); j++) {
-                (domain + prev_size + add_dot)[j] = link[j];
-            }
-            free(link);
+            domain = domain != NULL
+                ? reallocarray(domain, strlen(domain) + strlen(link) + 1, sizeof(char))
+                : calloc(strlen(link) + 1, sizeof(char));
+            strncat(domain, link, strlen(link));
             break;
         }
 
-        for (int j = 0; j < size; j++) {
-            (domain + prev_size + add_dot)[j] = raw_packet[i + j];
-        }
-
+        // ReSharper disable once CppIncompatiblePointerConversion
+        strncat(domain, raw_packet + i, size);
         i += size;
         segment_count++;
         prev_size += size + add_dot;
@@ -75,20 +74,19 @@ char *dns_parse_rdata(
 
     switch (type) {
         case A:
-            while (i < (rdata_length + *index)) {
-                bool last_segment = i + 1 == rdata_length + *index;
+            while (i < rdata_length + *index) {
+                const bool last_segment = i + 1 == rdata_length + *index;
                 char segment[4];
                 snprintf(segment, 4, "%d", rdata[i]);
 
                 result = result != NULL
-                             ? reallocarray(result, result_size + strlen(segment) + !last_segment, sizeof(char))
-                             : calloc(result_size + strlen(segment) + !last_segment, sizeof(char));
+                             ? reallocarray(result, result_size + strlen(segment) + !last_segment + 1, sizeof(char))
+                             : calloc(strlen(segment) + !last_segment + 1, sizeof(char));
 
-                for (size_t j = 0; j < strlen(segment); j++) {
-                    (result + result_size)[j] = segment[j];
-                }
+                strncat(result, segment, strlen(segment));
+
                 if (!last_segment) {
-                    result[result_size + strlen(segment)] = '.';
+                    strncat(result, ".", 1);
                 }
 
                 result_size += strlen(segment) + !last_segment;
@@ -98,20 +96,20 @@ char *dns_parse_rdata(
             break;
         case AAAA:
             while (i + 1 < (rdata_length + *index)) {
-                bool last_segment = i + 2 >= rdata_length + *index;
+                const bool last_segment = i + 2 >= rdata_length + *index;
 
                 char segment[5];
                 snprintf(segment, 3, "%02hhx", rdata[i]);
-                snprintf(segment + 2, 3, "%02hhx", rdata[i + 1]);
+                snprintf(segment + strlen(segment), 3, "%02hhx", rdata[i + 1]);
 
                 result = result != NULL
-                    ? realloc(result, (result_size + strlen(segment) + !last_segment) * sizeof(char))
-                    : calloc(result_size + strlen(segment) + !last_segment, sizeof(char));
-                for (size_t j = 0; j < strlen(segment); j++) {
-                    (result + result_size)[j] = segment[j];
-                }
+                    ? reallocarray(result, result_size + strlen(segment) + !last_segment + 1, sizeof(char))
+                    : calloc(strlen(segment) + !last_segment + 1, sizeof(char));
+
+                strncat(result, segment, strlen(segment));
+
                 if (!last_segment) {
-                    result[result_size + strlen(segment)] = ':';
+                    strncat(result, ":", 1);
                 }
 
                 result_size += strlen(segment) + !last_segment;
@@ -150,7 +148,7 @@ size_t merge_octets(const size_t count, const unsigned char octets[], size_t *in
     return result;
 }
 
-int dns_packet_parse(size_t packet_length, const unsigned char raw_packet[], struct dns_packet *result) {
+int dns_packet_parse(size_t packet_length, const  unsigned char raw_packet[], struct dns_packet *result) {
     if (packet_length < 12) return -1;
 
     result->transaction_id[0] = raw_packet[0];
