@@ -47,6 +47,7 @@ char *dns_parse_domain(
                 ? reallocarray(domain, strlen(domain) + strlen(link) + 1, sizeof(char))
                 : calloc(strlen(link) + 1, sizeof(char));
             strncat(domain, link, strlen(link));
+            free(link);
             break;
         }
 

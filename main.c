@@ -1,7 +1,5 @@
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <stdio.h>
 #include <getopt.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <arpa/inet.h>
@@ -9,6 +7,8 @@
 #include <libnftnl/set.h>
 #include <linux/netfilter.h>
 #include <linux/netfilter/nf_tables.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
 #include "dns_packet/dns_parse_utils.h"
 #include "dns_socket/dns_socket.h"
 #include "filedaemon/filedaemon.h"
@@ -118,7 +118,7 @@ void update_ipset(
     }
 
     mnl_nlmsg_batch_next(batch);
-    nftnl_batch_end(mnl_nlmsg_batch_current(batch), seq++);
+    nftnl_batch_end(mnl_nlmsg_batch_current(batch), seq);
     mnl_nlmsg_batch_next(batch);
 
     if (mnl_socket_sendto(nl, mnl_nlmsg_batch_head(batch), mnl_nlmsg_batch_size(batch)) < 0) {
