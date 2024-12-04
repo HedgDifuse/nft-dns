@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <stdbool.h>
+#include <sys/time.h>
 
 int make_dns_socket(char *address_and_port, bool self) {
     const int descriptor = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
@@ -21,6 +22,18 @@ int make_dns_socket(char *address_and_port, bool self) {
     const int reuse_addr = 1;
     if (setsockopt(descriptor, SOL_SOCKET, SO_REUSEADDR, &reuse_addr, sizeof(reuse_addr)) < 0) {
         perror("setsockopt");
+        return -1;
+    }
+
+    struct timeval rcv_time = { 5, 0 };
+    if (setsockopt(descriptor, SOL_SOCKET, SO_RCVTIMEO, &rcv_time, sizeof(rcv_time))) {
+        perror("setsockopt SO_RCVTIMEO");
+        return -1;
+    }
+
+    struct timeval snd_time = { 5, 0 };
+    if (setsockopt(descriptor, SOL_SOCKET, SO_SNDTIMEO, &snd_time, sizeof(snd_time))) {
+        perror("setsockopt SO_SNDTIMEO");
         return -1;
     }
 

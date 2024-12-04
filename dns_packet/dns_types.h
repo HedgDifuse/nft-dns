@@ -4,7 +4,7 @@
 #ifndef NFT_DNS_TYPES_H
 #define NFT_DNS_TYPES_H
 
-#define DNS_PACKET_MAX_LENGTH 512
+#define DNS_PACKET_MAX_LENGTH 4096
 
 enum dns_return_code {
     NOERROR = 0,

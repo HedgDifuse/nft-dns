@@ -141,20 +141,24 @@ void update_ipset(
 }
 
 int main(const int argc, char *argv[]) {
-    int listen_sock = -1,
-            upstream_sock = -1,
-            option_index = 0;
+    int option_index = 0,
+            listen_sock = -1,
+            upstream_sock = -1;
 
     char *ipv4_name = NULL,
-            *ipv6_name = NULL;
+            *ipv6_name = NULL,
+            *listen_ip_addr = NULL,
+            *upstream_ip_addr = NULL;
 
     while (getopt_long(argc, argv, "l:u:f:s:d", options, &option_index) >= 0) {
         switch (option_index) {
             case 0:
-                listen_sock = make_dns_socket(optarg, true);
+                listen_ip_addr = optarg;
+                listen_sock = make_dns_socket(listen_ip_addr, true);
                 break;
             case 1:
-                upstream_sock = make_dns_socket(optarg, false);
+                upstream_ip_addr = optarg;
+                upstream_sock = make_dns_socket(upstream_ip_addr, false);
                 break;
             case 2:
                 ipv4_name = optarg;
@@ -170,7 +174,7 @@ int main(const int argc, char *argv[]) {
         }
     }
 
-    if (listen_sock == -1 || upstream_sock == -1) {
+    if (listen_ip_addr == NULL || upstream_ip_addr == NULL) {
         fprintf(
             stderr, "Usage: nft-dns --listen addr[:port] --dns addr[:port] --ip4_set name --ip6_set name [--debug]\n");
         exit(EXIT_FAILURE);
@@ -202,7 +206,6 @@ int main(const int argc, char *argv[]) {
         if ((received = recvfrom(listen_sock, msg, sizeof(msg), 0,
                                  (struct sockaddr *) &client_addr,
                                  &client_addr_len)) == -1) {
-            perror("listen read");
             continue;
         }
 
