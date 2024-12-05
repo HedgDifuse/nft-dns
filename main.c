@@ -200,22 +200,20 @@ int main(const int argc, char *argv[]) {
     while (true) {
         unsigned char msg[DNS_PACKET_MAX_LENGTH];
         size_t received;
-
         socklen_t client_addr_len = sizeof(client_addr);
 
         if ((received = recvfrom(listen_sock, msg, sizeof(msg), 0,
                                  (struct sockaddr *) &client_addr,
                                  &client_addr_len)) == -1) {
+            close(listen_sock);
+            listen_sock = make_dns_socket(listen_ip_addr, true, false);
             continue;
         }
 
-        if (send(upstream_sock, msg, received, 0) == -1) {
+        if (send(upstream_sock, msg, received, 0) == -1 || (received = recv(upstream_sock, msg, sizeof(msg), 0)) == -1) {
             perror("upstream send");
-            continue;
-        }
-
-        if ((received = recv(upstream_sock, msg, sizeof(msg), 0)) == -1) {
-            perror("upstream read");
+            close(upstream_sock);
+            upstream_sock = make_dns_socket(upstream_ip_addr, false, false);
             continue;
         }
 
@@ -280,6 +278,8 @@ int main(const int argc, char *argv[]) {
                    (struct sockaddr *) &client_addr,
                    sizeof(client_addr)) == -1) {
             perror("send back");
+            close(upstream_sock);
+            listen_sock = make_dns_socket(listen_ip_addr, true, false);
         }
     }
 }
