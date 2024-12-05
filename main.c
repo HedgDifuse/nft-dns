@@ -154,11 +154,11 @@ int main(const int argc, char *argv[]) {
         switch (option_index) {
             case 0:
                 listen_ip_addr = optarg;
-                listen_sock = make_dns_socket(listen_ip_addr, true);
+                listen_sock = make_dns_socket(listen_ip_addr, true, false);
                 break;
             case 1:
                 upstream_ip_addr = optarg;
-                upstream_sock = make_dns_socket(upstream_ip_addr, false);
+                upstream_sock = make_dns_socket(upstream_ip_addr, false, false);
                 break;
             case 2:
                 ipv4_name = optarg;
