@@ -278,7 +278,7 @@ int main(const int argc, char *argv[]) {
                    (struct sockaddr *) &client_addr,
                    sizeof(client_addr)) == -1) {
             perror("send back");
-            close(upstream_sock);
+            close(listen_sock);
             listen_sock = make_dns_socket(listen_ip_addr, true, false);
         }
     }
