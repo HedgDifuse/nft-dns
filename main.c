@@ -274,7 +274,7 @@ int main(const int argc, char *argv[]) {
         }
         dns_packet_free(&packet);
 
-        if (sendto(listen_sock, msg, received, 0,
+        if (sendto(listen_sock, msg, received, MSG_DONTWAIT,
                    (struct sockaddr *) &client_addr,
                    sizeof(client_addr)) == -1) {
             perror("send back");

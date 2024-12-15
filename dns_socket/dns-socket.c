@@ -51,7 +51,7 @@ int make_dns_socket(char *address_and_port, bool self, bool non_blocking) {
 
     if (self && bind(descriptor, (const struct sockaddr *) &address, sizeof(address)) < 0) {
         perror("bind");
-        return -1;
+        exit(EXIT_FAILURE);
     }
     if (!self && connect(descriptor, (const struct sockaddr *) &address, sizeof(address)) < 0) {
         perror("connect");
