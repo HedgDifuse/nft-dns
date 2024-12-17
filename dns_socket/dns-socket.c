@@ -26,26 +26,20 @@ int make_dns_socket(char *address_and_port, bool self, bool non_blocking) {
 
     const struct sockaddr_in address = make_dns_socket_addr(address_and_port);
 
-    if (non_blocking && fcntl(descriptor, F_SETFL, fcntl(descriptor, F_GETFL, 0) | O_NONBLOCK) < 0) {
-        perror("fcntl");
-        return -1;
-    }
-
     const int reuse_addr = 1;
-    if (setsockopt(descriptor, SOL_SOCKET, SO_REUSEADDR | SO_REUSEPORT, &reuse_addr, sizeof(reuse_addr)) < 0) {
+    if (setsockopt(descriptor, SOL_SOCKET, SO_REUSEADDR, &reuse_addr, sizeof(reuse_addr)) < 0) {
         perror("setsockopt");
         return -1;
     }
 
-    struct timeval rcv_time = { 3, 0 };
-    if (setsockopt(descriptor, SOL_SOCKET, SO_RCVTIMEO, &rcv_time, sizeof(rcv_time))) {
-        perror("setsockopt SO_RCVTIMEO");
+    int rcv_buff = 16384 * 10;
+    if (setsockopt(descriptor, SOL_SOCKET, SO_RCVBUF, &rcv_buff, sizeof(rcv_buff)) < 0) {
+        perror("setsockopt");
         return -1;
     }
 
-    struct timeval snd_time = { 3, 0 };
-    if (setsockopt(descriptor, SOL_SOCKET, SO_SNDTIMEO, &snd_time, sizeof(snd_time))) {
-        perror("setsockopt SO_SNDTIMEO");
+    if (non_blocking && fcntl(descriptor, F_SETFL, fcntl(descriptor, F_GETFL) | O_NONBLOCK) < 0) {
+        perror("fcntl");
         return -1;
     }
 
