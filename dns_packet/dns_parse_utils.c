@@ -150,7 +150,7 @@ size_t merge_octets(const size_t count, const unsigned char octets[], size_t *in
 }
 
 int dns_packet_parse(size_t packet_length, const  unsigned char raw_packet[], struct dns_packet *result) {
-    if (packet_length < 12) return -1;
+    if (packet_length < 13) return -1;
 
     result->transaction_id[0] = raw_packet[0];
     result->transaction_id[1] = raw_packet[1];

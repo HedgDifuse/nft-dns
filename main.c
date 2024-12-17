@@ -180,7 +180,6 @@ int main(const int argc, char *argv[]) {
         exit(EXIT_FAILURE);
     }
 
-    struct sockaddr_in client_addr;
     const volatile hashset_t domains = hashset_create();
 
     struct mnl_socket *nl = mnl_socket_open(NETLINK_NETFILTER);
@@ -193,25 +192,30 @@ int main(const int argc, char *argv[]) {
         perror("mnl_socket_bind");
         exit(EXIT_FAILURE);
     }
-    unsigned int port_id = mnl_socket_get_portid(nl);
 
     make_domains_daemon(&domains);
 
     while (true) {
         unsigned char msg[DNS_PACKET_MAX_LENGTH];
         size_t received;
+        struct sockaddr_in client_addr;
         socklen_t client_addr_len = sizeof(client_addr);
 
         if ((received = recvfrom(listen_sock, msg, sizeof(msg), 0,
                                  (struct sockaddr *) &client_addr,
                                  &client_addr_len)) == -1) {
-            close(listen_sock);
-            listen_sock = make_dns_socket(listen_ip_addr, true, false);
             continue;
         }
 
-        if (send(upstream_sock, msg, received, 0) == -1 || (received = recv(upstream_sock, msg, sizeof(msg), 0)) == -1) {
+        if (send(upstream_sock, msg, received, 0) == -1) {
             perror("upstream send");
+            close(upstream_sock);
+            upstream_sock = make_dns_socket(upstream_ip_addr, false, false);
+            continue;
+        }
+
+        if ((received = recv(upstream_sock, msg, sizeof(msg), 0)) == -1) {
+            perror("upstream recv");
             close(upstream_sock);
             upstream_sock = make_dns_socket(upstream_ip_addr, false, false);
             continue;
@@ -266,7 +270,7 @@ int main(const int argc, char *argv[]) {
             }
 
             if (ip4_size != 0 || ip6_size != 0) {
-                update_ipset(ip4_set, ip6_set, ip4_size, ip6_size, nl, port_id, ipv4_name, ipv6_name);
+                update_ipset(ip4_set, ip6_set, ip4_size, ip6_size, nl, mnl_socket_get_portid(nl), ipv4_name, ipv6_name);
             }
 
             if (ip4_size == 0) nftnl_set_free(ip4_set);
@@ -276,7 +280,7 @@ int main(const int argc, char *argv[]) {
 
         if (sendto(listen_sock, msg, received, MSG_DONTWAIT,
                    (struct sockaddr *) &client_addr,
-                   sizeof(client_addr)) == -1) {
+                   client_addr_len) == -1) {
             perror("send back");
             close(listen_sock);
             listen_sock = make_dns_socket(listen_ip_addr, true, false);
