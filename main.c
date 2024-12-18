@@ -204,6 +204,8 @@ int main(const int argc, char *argv[]) {
         if ((received = recvfrom(listen_sock, msg, sizeof(msg), 0,
                                  (struct sockaddr *) &client_addr,
                                  &client_addr_len)) == -1) {
+            close(listen_sock);
+            listen_sock = make_dns_socket(listen_ip_addr, true, false);
             continue;
         }
 
