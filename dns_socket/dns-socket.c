@@ -32,8 +32,14 @@ int make_dns_socket(char *address_and_port, bool self, bool non_blocking) {
         return -1;
     }
 
-    int rcv_buff = 16384 * 10;
-    if (setsockopt(descriptor, SOL_SOCKET, SO_RCVBUF, &rcv_buff, sizeof(rcv_buff)) < 0) {
+    struct timeval rcv_tv = { 2, 0 };
+    if (setsockopt(descriptor, SOL_SOCKET, SO_RCVTIMEO, &rcv_tv, sizeof(rcv_tv)) < 0) {
+        perror("setsockopt");
+        return -1;
+    }
+
+    struct timeval snd_tv = { 2, 0 };
+    if (setsockopt(descriptor, SOL_SOCKET, SO_SNDTIMEO, &snd_tv, sizeof(snd_tv)) < 0) {
         perror("setsockopt");
         return -1;
     }

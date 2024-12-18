@@ -146,7 +146,7 @@ void update_ipset(
 
 struct epoll_payload {
     int listen_fd;
-    int upstream_fd;
+    int *upstream_fd;
     struct sockaddr client_addr;
     socklen_t client_addr_len;
 };
@@ -165,7 +165,7 @@ int remove_fd_from_epoll(const int fd, const int epfd) {
 }
 
 int main(const int argc, char *argv[]) {
-    int option_index = 0, active_sockets = 0;
+    int option_index = 0, active_sockets = 0, active_clients = 0;
 
     char *ipv4_name = NULL,
             *ipv6_name = NULL,
@@ -217,8 +217,8 @@ int main(const int argc, char *argv[]) {
 
     struct epoll_payload epoll_payloads[MAX_CONNECTIONS * 2] = {{}};
 
-    const int listen_epfd = epoll_create(MAX_CONNECTIONS);
-    const int upstream_epfd = epoll_create(MAX_CONNECTIONS);
+    const int listen_epfd = epoll_create(1);
+    const int upstream_epfd = epoll_create(1);
 
     for (int i = 0; i < MAX_CONNECTIONS; i++) {
         if (add_fd_to_epoll(make_dns_socket(listen_ip_addr, true, true), listen_epfd) == -1) {
@@ -230,12 +230,29 @@ int main(const int argc, char *argv[]) {
     }
 
     int ready_fds = 0;
-    struct epoll_event events[MAX_CONNECTIONS];
-
     while (true) {
+        struct epoll_event events[MAX_CONNECTIONS];
+
         if ((ready_fds = epoll_wait(upstream_epfd, events, active_sockets, 0)) == -1) {
             perror("epoll_wait");
         }
+
+        if (events->events & EPOLLHUP || events->events & EPOLLERR || events->events & EPOLLPRI || events->events & EPOLLRDHUP) {
+            for (int i = 0; i < ready_fds; i++) {
+                remove_fd_from_epoll(events[i].data.fd, upstream_epfd);
+                close(events[i].data.fd);
+
+                const struct epoll_payload payload = epoll_payloads[events[i].data.fd % MAX_CONNECTIONS * 2];
+
+                remove_fd_from_epoll(payload.listen_fd, listen_epfd);
+                close(payload.listen_fd);
+
+                epoll_payloads[events[i].data.fd % MAX_CONNECTIONS * 2] = (struct epoll_payload) {};
+            }
+
+            continue;
+        }
+
 
         for (int i = 0; i < ready_fds; i++) {
             unsigned char msg[DNS_PACKET_MAX_LENGTH];
@@ -244,11 +261,14 @@ int main(const int argc, char *argv[]) {
             const int upstream_sock = events[i].data.fd;
             struct epoll_payload payload = epoll_payloads[upstream_sock % MAX_CONNECTIONS * 2];
 
-            if (&epoll_payloads->listen_fd == NULL) continue;
+            if ((received = recv(upstream_sock, msg, sizeof(msg), 0)) == -1) {
+                perror("upstream_recv");
+                continue;
+            }
 
-            if ((received = recv(upstream_sock, msg, sizeof(msg), 0)) == -1) continue;
-
-            fprintf(stderr, "received %lu bytes\n", received);
+            if (debug) {
+                fprintf(stderr, "received %lu bytes\n", received);
+            }
 
             struct dns_packet packet = {};
 
@@ -311,6 +331,28 @@ int main(const int argc, char *argv[]) {
             perror("epoll_wait");
         }
 
+        if (events->events & EPOLLHUP || events->events & EPOLLERR || events->events & EPOLLPRI || events->events & EPOLLRDHUP) {
+            fprintf(stderr, "close %d listen sockets\n", ready_fds);
+
+            for (int i = 0; i < ready_fds; i++) {
+                remove_fd_from_epoll(events[i].data.fd, listen_epfd);
+                close(events[i].data.fd);
+
+                const struct epoll_payload payload = epoll_payloads[events[i].data.fd % MAX_CONNECTIONS * 2];
+
+                remove_fd_from_epoll(*payload.upstream_fd, upstream_epfd);
+                close(*payload.upstream_fd);
+
+                epoll_payloads[events[i].data.fd % MAX_CONNECTIONS * 2] = (struct epoll_payload) {};
+
+                if (add_fd_to_epoll(make_dns_socket(listen_ip_addr, true, true), listen_epfd) == -1) {
+                    perror("epoll_ctl EPOLL_CTL_ADD");
+                }
+            }
+
+            continue;
+        }
+
 
         /*if (ready_fds == 0) {
             add_fd_to_epoll(
@@ -338,20 +380,23 @@ int main(const int argc, char *argv[]) {
             }
 
             payload.listen_fd = listen_sock;
-            payload.upstream_fd = make_dns_socket(upstream_ip_addr, false, true);
+            if (payload.upstream_fd == NULL) {
+                int socket = make_dns_socket(upstream_ip_addr, false, true);
+                payload.upstream_fd = &socket;
+
+                if (add_fd_to_epoll(*payload.upstream_fd, upstream_epfd) == -1) {
+                    perror("epoll_ctl EPOLL_CTL_ADD");
+                    exit(EXIT_FAILURE);
+                }
+            }
             payload.client_addr = client_addr;
             payload.client_addr_len = client_addr_len;
 
-            if (send(payload.upstream_fd, msg, received, 0) == -1) {
+            if (send(*payload.upstream_fd, msg, received, 0) == -1) {
                 perror("upstream send");
             }
             epoll_payloads[listen_sock % MAX_CONNECTIONS * 2] = payload;
-            epoll_payloads[payload.upstream_fd % MAX_CONNECTIONS * 2] = payload;
-
-            if (add_fd_to_epoll(payload.upstream_fd, upstream_epfd) == -1) {
-                perror("epoll_ctl EPOLL_CTL_ADD");
-                exit(EXIT_FAILURE);
-            }
+            epoll_payloads[*payload.upstream_fd % MAX_CONNECTIONS * 2] = payload;
         }
     }
 }
