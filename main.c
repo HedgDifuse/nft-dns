@@ -145,14 +145,21 @@ void update_ipset(
 }
 
 struct dns_request_source {
+    unsigned char *msg;
+    size_t msg_size;
+
+    struct dns_request_source *prev;
+};
+
+struct dns_request_payload {
     int listen_fd;
-    struct sockaddr client_addr;
-    socklen_t client_addr_len;
+    struct sockaddr addr;
+    socklen_t addr_len;
 };
 
 int add_fd_to_epoll(const int listen_fd, const int epfd) {
     struct epoll_event event = {
-        .events = EPOLLIN | EPOLLET,
+        .events = EPOLLIN | EPOLLET | EPOLLOUT,
         .data = {.fd = listen_fd}
     };
 
@@ -214,16 +221,20 @@ int main(const int argc, char *argv[]) {
 
     make_domains_daemon(&domains);
 
-    struct dns_request_source *dns_request_sources[0x10000] = {NULL};
-    int upstreams_per_listens[MAX_CONNECTIONS] = {-1};
+    struct dns_request_source *source_queue = NULL;
+    struct dns_request_payload *request_payloads[0x10000] = {NULL};
 
     const int listen_epfd = epoll_create(1);
+
+    int upstream_fds[MAX_CONNECTIONS];
 
     for (int i = 0; i < MAX_CONNECTIONS; i++) {
         if (add_fd_to_epoll(make_dns_socket(listen_ip_addr, true, true), listen_epfd) == -1) {
             perror("epoll_ctl EPOLL_CTL_ADD");
             exit(EXIT_FAILURE);
         }
+
+        upstream_fds[i] = make_dns_socket(upstream_ip_addr, false, true);
 
         active_sockets++;
     }
@@ -233,86 +244,79 @@ int main(const int argc, char *argv[]) {
         struct epoll_event events[MAX_CONNECTIONS];
 
         for (int i = 0; i < MAX_CONNECTIONS; i++) {
+            unsigned char msg[DNS_PACKET_MAX_LENGTH];
             size_t received;
 
-            if (upstreams_per_listens[i] == -1) continue;
+            if ((received = recv(upstream_fds[i], msg, sizeof(msg), 0)) > 1) {
+                struct dns_packet packet = {};
+                const short id = msg[0] * 0x100 + msg[1];
+                const struct dns_request_payload *payload = request_payloads[id];
 
-            do {
-                unsigned char msg[DNS_PACKET_MAX_LENGTH];
+                if (payload == NULL) break;
 
-                if ((received = recv(upstreams_per_listens[i], msg, sizeof(msg), 0)) == -1) {
-                    break;
-                }
+                if (dns_packet_parse(received, msg, &packet) != -1) {
+                    struct nftnl_set *ip4_set = nftnl_set_alloc();
+                    struct nftnl_set *ip6_set = nftnl_set_alloc();
+                    size_t ip4_size = 0;
+                    size_t ip6_size = 0;
+                    const struct dns_answer *cname = NULL;
 
-                if (debug) {
-                    fprintf(stderr, "received %lu upstream bytes\n", received);
-                }
-
-                if (received >= 2) {
-                    struct dns_packet packet = {};
-                    const short id = msg[0] * 0x100 + msg[1];
-                    const struct dns_request_source *source = dns_request_sources[id];
-
-                    if (source == NULL) break;
-
-                    if (dns_packet_parse(received, msg, &packet) != -1) {
-                        struct nftnl_set *ip4_set = nftnl_set_alloc();
-                        struct nftnl_set *ip6_set = nftnl_set_alloc();
-                        size_t ip4_size = 0;
-                        size_t ip6_size = 0;
-                        const struct dns_answer *cname = NULL;
-
-                        for (size_t j = 0; j < packet.answers_count; j++) {
-                            if (debug) {
-                                printf("domain: %s, rdata: %s\n", packet.answers[j].domain, packet.answers[j].data);
-                            }
-
-                            if (packet.answers[j].type == CNAME) {
-                                cname = &packet.answers[j];
-                                continue;
-                            }
-                            if (packet.answers[j].type != A && packet.answers[j].type != AAAA) continue;
-
-                            struct nftnl_set_elem *set_element = nftnl_set_elem_alloc();
-                            const bool ipv4 = packet.answers[j].type == A;
-
-                            if (!add_to_ipset(
-                                    &domains,
-                                    ipv4 ? ip4_set : ip6_set,
-                                    set_element,
-                                    cname, packet.answers[j])
-                            ) {
-                                nftnl_set_elem_free(set_element);
-                                continue;
-                            }
-
-                            if (ipv4) {
-                                ip4_size++;
-                            } else {
-                                ip6_size++;
-                            }
+                    for (size_t j = 0; j < packet.answers_count; j++) {
+                        if (debug) {
+                            printf("domain: %s, rdata: %s\n", packet.answers[j].domain, packet.answers[j].data);
                         }
 
-                        if (ip4_size != 0 || ip6_size != 0) {
-                            update_ipset(ip4_set, ip6_set, ip4_size, ip6_size, nl, mnl_socket_get_portid(nl), ipv4_name,
-                                         ipv6_name);
+                        if (packet.answers[j].type == CNAME) {
+                            cname = &packet.answers[j];
+                            continue;
+                        }
+                        if (packet.answers[j].type != A && packet.answers[j].type != AAAA) continue;
+
+                        struct nftnl_set_elem *set_element = nftnl_set_elem_alloc();
+                        const bool ipv4 = packet.answers[j].type == A;
+
+                        if (!add_to_ipset(
+                                &domains,
+                                ipv4 ? ip4_set : ip6_set,
+                                set_element,
+                                cname, packet.answers[j])
+                        ) {
+                            nftnl_set_elem_free(set_element);
+                            continue;
                         }
 
-                        if (ip4_size == 0) nftnl_set_free(ip4_set);
-                        if (ip6_size == 0) nftnl_set_free(ip6_set);
-                    }
-                    dns_packet_free(&packet);
-
-                    if (sendto(source->listen_fd, msg, received, 0,
-                               &source->client_addr,
-                               source->client_addr_len) == -1
-                    ) {
-                        perror("send back");
+                        if (ipv4) {
+                            ip4_size++;
+                        } else {
+                            ip6_size++;
+                        }
                     }
 
-                    dns_request_sources[id] = NULL;
+                    if (ip4_size != 0 || ip6_size != 0) {
+                        update_ipset(ip4_set, ip6_set, ip4_size, ip6_size, nl, mnl_socket_get_portid(nl), ipv4_name,
+                                     ipv6_name);
+                    }
+
+                    if (ip4_size == 0) nftnl_set_free(ip4_set);
+                    if (ip6_size == 0) nftnl_set_free(ip6_set);
                 }
-            } while (received > 0);
+                dns_packet_free(&packet);
+
+                if (sendto(payload->listen_fd, msg, received, 0,
+                           &payload->addr,
+                           payload->addr_len) == -1
+                ) {
+                    perror("send back");
+                }
+
+                request_payloads[id] = NULL;
+            }
+
+            const struct dns_request_source *source = source_queue;
+            if (source == NULL) continue;
+
+            send(upstream_fds[i], &source->msg, source->msg_size, 0);
+            source_queue = source->prev;
         }
 
         if ((ready_fds = epoll_wait(listen_epfd, events, active_sockets, 0)) == -1) {
@@ -321,7 +325,6 @@ int main(const int argc, char *argv[]) {
 
         for (int i = 0; i < ready_fds; i++) {
             size_t received = 0;
-
             const int listen_sock = events[i].data.fd;
 
             do {
@@ -337,18 +340,8 @@ int main(const int argc, char *argv[]) {
                 if (received >= 2) {
                     const short id = msg[0] * 0x100 + msg[1];
 
-                    dns_request_sources[id] = &(struct dns_request_source){listen_sock, client_addr, client_addr_len};
-
-                    int upstream_sock = upstreams_per_listens[listen_sock % MAX_CONNECTIONS];
-
-                    if (upstream_sock <= 0) {
-                        upstream_sock = make_dns_socket(upstream_ip_addr, false, true);
-                        upstreams_per_listens[listen_sock % MAX_CONNECTIONS] = upstream_sock;
-                    }
-
-                    if (send(upstream_sock, msg, received, 0) == -1) {
-                        perror("sendto upstream");
-                    }
+                    request_payloads[id] = &(struct dns_request_payload){listen_sock, client_addr, client_addr_len};
+                    source_queue = &(struct dns_request_source){msg, received, source_queue};
                 }
             } while (received > 0);
         }
