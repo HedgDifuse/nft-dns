@@ -313,9 +313,6 @@ int main(const int argc, char *argv[]) {
                     dns_request_sources[id] = NULL;
                 }
             } while (received > 0);
-
-            close(upstreams_per_listens[i]);
-            upstreams_per_listens[i] = -1;
         }
 
         if ((ready_fds = epoll_wait(listen_epfd, events, active_sockets, 0)) == -1) {
