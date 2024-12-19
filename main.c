@@ -253,9 +253,15 @@ int main(const int argc, char *argv[]) {
         for (int i = 0; i < ready_fds; i++) {
             size_t received = 0;
 
-            if (events[i].events & EPOLLERR) continue;
-            if (events[i].events & EPOLLHUP) continue;
-            if (events[i].events & EPOLLRDHUP) continue;
+            if (events[i].events & EPOLLERR || events[i].events & EPOLLHUP || events[i].events & EPOLLRDHUP) {
+                remove_fd_from_epoll(events[i].data.fd, upstream_epfd);
+                if (add_fd_to_epoll(make_dns_socket(upstream_ip_addr, false, true), upstream_epfd,
+                                    EPOLLOUT | EPOLLIN | EPOLLERR | EPOLLHUP | EPOLLRDHUP) == -1) {
+                    perror("epoll_ctl EPOLL_CTL_ADD upstream");
+                }
+
+                continue;
+            }
             if ((events[i].events & EPOLLIN) == 0) continue;
 
             do {
@@ -343,9 +349,15 @@ int main(const int argc, char *argv[]) {
             const int listen_sock = events[i].data.fd;
             size_t messages_count = 0;
 
-            if (events[i].events & EPOLLERR) continue;
-            if (events[i].events & EPOLLHUP) continue;
-            if (events[i].events & EPOLLRDHUP) continue;
+            if (events[i].events & EPOLLERR || events[i].events & EPOLLHUP || events[i].events & EPOLLRDHUP) {
+                remove_fd_from_epoll(events[i].data.fd, listen_epfd);
+                if (add_fd_to_epoll(make_dns_socket(listen_ip_addr, true, true), listen_epfd,
+                                    EPOLLIN | EPOLLOUT | EPOLLET | EPOLLHUP | EPOLLRDHUP) == -1) {
+                    perror("epoll_ctl EPOLL_CTL_ADD listen");
+                }
+
+                continue;
+            }
             if ((events[i].events & EPOLLIN) == 0) continue;
 
             struct epoll_event upstreams[MAX_CONNECTIONS];
@@ -363,7 +375,9 @@ int main(const int argc, char *argv[]) {
                 }
 
                 if (received >= 2) {
-                    while (upstream_socket >= 0 && (upstreams[upstream_socket].events & EPOLLOUT) == 0) { upstream_socket--; }
+                    while (upstream_socket >= 0 && (upstreams[upstream_socket].events & EPOLLOUT) == 0) {
+                        upstream_socket--;
+                    }
                     if (upstream_socket == -1) {
                         upstream_socket = epoll_wait(upstream_epfd, upstreams, MAX_CONNECTIONS, 0) - 1;
                         continue;
