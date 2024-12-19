@@ -308,8 +308,6 @@ int main(const int argc, char *argv[]) {
                 }
                 dns_packet_free(&packet);
 
-                printf("send back to %d\n", payload->listen_fd);
-
                 if (sendto(
                         payload->listen_fd,
                         msg,
