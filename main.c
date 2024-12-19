@@ -147,6 +147,8 @@ void update_ipset(
 struct dns_request_payload {
     int listen_fd;
     struct sockaddr addr;
+
+    struct dns_request_payload *next;
 };
 
 int add_fd_to_epoll(const int listen_fd, const int epfd, const int events) {
@@ -213,18 +215,21 @@ int main(const int argc, char *argv[]) {
 
     make_domains_daemon(&domains);
 
-    struct dns_request_payload *request_payloads[MAX_CONNECTIONS] = {NULL};
+    struct dns_request_payload *request_payloads[0x10000] = {NULL};
+    bool listen_blocked[MAX_CONNECTIONS] = {false};
 
     const int listen_epfd = epoll_create1(0);
     const int upstream_epfd = epoll_create1(0);
 
     for (int i = 0; i < MAX_CONNECTIONS; i++) {
-        if (add_fd_to_epoll(make_dns_socket(listen_ip_addr, true, true), listen_epfd, EPOLLIN | EPOLLOUT | EPOLLET | EPOLLHUP | EPOLLRDHUP) == -1) {
+        if (add_fd_to_epoll(make_dns_socket(listen_ip_addr, true, true), listen_epfd,
+                            EPOLLIN | EPOLLOUT | EPOLLET | EPOLLHUP | EPOLLRDHUP) == -1) {
             perror("epoll_ctl EPOLL_CTL_ADD listen");
             exit(EXIT_FAILURE);
         }
 
-        if (add_fd_to_epoll(make_dns_socket(upstream_ip_addr, false, true), upstream_epfd, EPOLLOUT | EPOLLIN | EPOLLERR | EPOLLHUP | EPOLLRDHUP) == -1) {
+        if (add_fd_to_epoll(make_dns_socket(upstream_ip_addr, false, true), upstream_epfd,
+                            EPOLLOUT | EPOLLIN | EPOLLERR | EPOLLHUP | EPOLLRDHUP) == -1) {
             perror("epoll_ctl EPOLL_CTL_ADD upstream");
             exit(EXIT_FAILURE);
         }
@@ -251,13 +256,9 @@ int main(const int argc, char *argv[]) {
 
                 if ((received = recv(events[i].data.fd, msg, sizeof(msg), 0)) == -1) break;
 
-
                 struct dns_packet packet = {};
-                const unsigned short id = events[i].data.fd % MAX_CONNECTIONS;
-
-                if (request_payloads[id] == NULL) break;
-
-                const struct dns_request_payload payload = *request_payloads[id];
+                if (request_payloads[msg[0] * 0x100 + msg[1]] == NULL) break;
+                const struct dns_request_payload *payload = request_payloads[msg[0] * 0x100 + msg[1]];
 
                 if (dns_packet_parse(received, msg, &packet) != -1) {
                     struct nftnl_set *ip4_set = nftnl_set_alloc();
@@ -307,17 +308,21 @@ int main(const int argc, char *argv[]) {
                 }
                 dns_packet_free(&packet);
 
+                printf("send back to %d\n", payload->listen_fd);
+
                 if (sendto(
-                        payload.listen_fd,
+                        payload->listen_fd,
                         msg,
                         received,
                         0,
-                        &payload.addr,
-                        sizeof(payload.addr)) == -1
+                        &payload->addr,
+                        sizeof(payload->addr)) == -1
                 ) {
                     perror("send back");
-                    continue;
                 }
+
+                listen_blocked[payload->listen_fd] = false;
+                request_payloads[msg[0] * 0x100 + msg[1]] = payload->next;
             } while (received > 0);
         }
 
@@ -328,41 +333,46 @@ int main(const int argc, char *argv[]) {
         for (int i = 0; i < ready_fds; i++) {
             size_t received = 0;
             const int listen_sock = events[i].data.fd;
-            size_t messages_count = 0;
 
             if (events[i].events & EPOLLERR) continue;
             if (events[i].events & EPOLLHUP) continue;
             if (events[i].events & EPOLLRDHUP) continue;
             if ((events[i].events & EPOLLIN) == 0) continue;
+            if (listen_blocked[listen_sock]) continue;
 
-            do {
-                unsigned char msg[DNS_PACKET_MAX_LENGTH];
-                struct sockaddr client_addr;
-                socklen_t client_addr_len = sizeof(client_addr);
+            unsigned char msg[DNS_PACKET_MAX_LENGTH];
+            struct sockaddr client_addr;
+            socklen_t client_addr_len = sizeof(client_addr);
 
-                if ((received = recvfrom(listen_sock, msg, sizeof(msg), 0,
-                                         &client_addr,
-                                         &client_addr_len)) == -1) {
+            if ((received = recvfrom(listen_sock, msg, sizeof(msg), 0,
+                                     &client_addr,
+                                     &client_addr_len)) == -1) {
+                break;
+            }
+
+            if (received >= 2) {
+                struct epoll_event upstreams[MAX_CONNECTIONS];
+
+                for (int j = 0; j < epoll_wait(upstream_epfd, upstreams, MAX_CONNECTIONS, 0); j++) {
+                    if ((upstreams[i].events & EPOLLOUT) == 0) continue;
+
+                    if (send(upstreams[i].data.fd, msg, received, 0) == -1) {
+                        perror("send upstream");
+                        continue;
+                    }
+
+                    struct dns_request_payload new_payload = {listen_sock, client_addr};
+
+                    if (request_payloads[msg[0] * 0x100 + msg[1]] != NULL) {
+                        request_payloads[msg[0] * 0x100 + msg[1]]->next = &new_payload;
+                    }
+
+                    request_payloads[msg[0] * 0x100 + msg[1]] = &new_payload;
+                    listen_blocked[listen_sock] = true;
+
                     break;
                 }
-
-                if (received >= 2) {
-                    struct epoll_event upstreams[MAX_CONNECTIONS];
-
-                    for (int j = 0; j < epoll_wait(upstream_epfd, upstreams, MAX_CONNECTIONS, 0); j++) {
-                        if (send(upstreams[i].data.fd, msg, sizeof(msg), 0) == -1) {
-                            perror("upstream send");
-                            continue;
-                        }
-
-                        request_payloads[upstreams[i].data.fd % MAX_CONNECTIONS] = &(struct dns_request_payload){listen_sock, client_addr};
-
-                        break;
-                    }
-                }
-
-                messages_count++;
-            } while (received > 0);
+            }
         }
     }
 }
