@@ -254,6 +254,7 @@ int main(const int argc, char *argv[]) {
             size_t received = 0;
 
             if (events[i].events & EPOLLERR || events[i].events & EPOLLHUP || events[i].events & EPOLLRDHUP) {
+                close(events[i].data.fd);
                 remove_fd_from_epoll(events[i].data.fd, upstream_epfd);
                 if (add_fd_to_epoll(make_dns_socket(upstream_ip_addr, false, true), upstream_epfd,
                                     EPOLLOUT | EPOLLIN | EPOLLERR | EPOLLHUP | EPOLLRDHUP) == -1) {
@@ -350,6 +351,7 @@ int main(const int argc, char *argv[]) {
             size_t messages_count = 0;
 
             if (events[i].events & EPOLLERR || events[i].events & EPOLLHUP || events[i].events & EPOLLRDHUP) {
+                close(events[i].data.fd);
                 remove_fd_from_epoll(events[i].data.fd, listen_epfd);
                 if (add_fd_to_epoll(make_dns_socket(listen_ip_addr, true, true), listen_epfd,
                                     EPOLLIN | EPOLLOUT | EPOLLET | EPOLLHUP | EPOLLRDHUP) == -1) {
