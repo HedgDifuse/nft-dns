@@ -44,6 +44,18 @@ int make_dns_socket(char *address_and_port, bool self, bool non_blocking) {
         return -1;
     }
 
+    const size_t rcvbuf = 16384 * 10;
+    if (setsockopt(descriptor, SOL_SOCKET, SO_RCVBUFFORCE, &rcvbuf, sizeof(rcvbuf)) < 0) {
+        perror("setsockopt");
+        return -1;
+    }
+
+    const size_t sndbuf = 16384 * 10;
+    if (setsockopt(descriptor, SOL_SOCKET, SO_SNDBUFFORCE, &sndbuf, sizeof(sndbuf)) < 0) {
+        perror("setsockopt");
+        return -1;
+    }
+
     if (non_blocking && fcntl(descriptor, F_SETFL, fcntl(descriptor, F_GETFL) | O_NONBLOCK) < 0) {
         perror("fcntl");
         return -1;

@@ -146,7 +146,10 @@ void update_ipset(
 
 struct dns_request_payload {
     int listen_fd;
+    int upstream_fd;
     struct sockaddr addr;
+
+    struct dns_request_payload *prev;
 };
 
 int add_fd_to_epoll(const int listen_fd, const int epfd, const int events) {
@@ -213,18 +216,20 @@ int main(const int argc, char *argv[]) {
 
     make_domains_daemon(&domains);
 
-    struct dns_request_payload *request_payloads[MAX_CONNECTIONS] = {NULL};
+    struct dns_request_payload *request_payloads = NULL;
 
     const int listen_epfd = epoll_create1(0);
     const int upstream_epfd = epoll_create1(0);
 
     for (int i = 0; i < MAX_CONNECTIONS; i++) {
-        if (add_fd_to_epoll(make_dns_socket(listen_ip_addr, true, true), listen_epfd, EPOLLIN | EPOLLOUT | EPOLLET | EPOLLHUP | EPOLLRDHUP) == -1) {
+        if (add_fd_to_epoll(make_dns_socket(listen_ip_addr, true, true), listen_epfd,
+                            EPOLLIN | EPOLLOUT | EPOLLET | EPOLLHUP | EPOLLRDHUP) == -1) {
             perror("epoll_ctl EPOLL_CTL_ADD listen");
             exit(EXIT_FAILURE);
         }
 
-        if (add_fd_to_epoll(make_dns_socket(upstream_ip_addr, false, true), upstream_epfd, EPOLLOUT | EPOLLIN | EPOLLERR | EPOLLHUP | EPOLLRDHUP) == -1) {
+        if (add_fd_to_epoll(make_dns_socket(upstream_ip_addr, false, true), upstream_epfd,
+                            EPOLLOUT | EPOLLIN | EPOLLERR | EPOLLHUP | EPOLLRDHUP) == -1) {
             perror("epoll_ctl EPOLL_CTL_ADD upstream");
             exit(EXIT_FAILURE);
         }
@@ -236,6 +241,13 @@ int main(const int argc, char *argv[]) {
 
         if ((ready_fds = epoll_wait(upstream_epfd, events, MAX_CONNECTIONS, 0)) == -1) {
             perror("epoll_wait");
+            request_payloads = NULL;
+            break;
+        }
+
+        if (ready_fds == 0) {
+            request_payloads = NULL;
+            break;
         }
 
         for (int i = 0; i < ready_fds; i++) {
@@ -249,15 +261,16 @@ int main(const int argc, char *argv[]) {
             do {
                 unsigned char msg[DNS_PACKET_MAX_LENGTH];
 
+                if (request_payloads == NULL) break;
+
+                const struct dns_request_payload payload = *request_payloads;
+
+                if (payload.upstream_fd != events[i].data.fd) break;
                 if ((received = recv(events[i].data.fd, msg, sizeof(msg), 0)) == -1) break;
 
-
                 struct dns_packet packet = {};
-                const unsigned short id = events[i].data.fd % MAX_CONNECTIONS;
 
-                if (request_payloads[id] == NULL) break;
-
-                const struct dns_request_payload payload = *request_payloads[id];
+                request_payloads = payload.prev;
 
                 if (dns_packet_parse(received, msg, &packet) != -1) {
                     struct nftnl_set *ip4_set = nftnl_set_alloc();
@@ -335,6 +348,9 @@ int main(const int argc, char *argv[]) {
             if (events[i].events & EPOLLRDHUP) continue;
             if ((events[i].events & EPOLLIN) == 0) continue;
 
+            struct epoll_event upstreams[MAX_CONNECTIONS];
+            int upstream_socket = epoll_wait(upstream_epfd, upstreams, MAX_CONNECTIONS, 0) - 1;
+
             do {
                 unsigned char msg[DNS_PACKET_MAX_LENGTH];
                 struct sockaddr client_addr;
@@ -347,18 +363,20 @@ int main(const int argc, char *argv[]) {
                 }
 
                 if (received >= 2) {
-                    struct epoll_event upstreams[MAX_CONNECTIONS];
+                    while (upstream_socket >= 0 && (upstreams[upstream_socket].events & EPOLLOUT) == 0) { upstream_socket--; }
+                    if (upstream_socket == -1) {
+                        upstream_socket = epoll_wait(upstream_epfd, upstreams, MAX_CONNECTIONS, 0) - 1;
+                        continue;
+                    };
 
-                    for (int j = 0; j < epoll_wait(upstream_epfd, upstreams, MAX_CONNECTIONS, 0); j++) {
-                        if (send(upstreams[i].data.fd, msg, sizeof(msg), 0) == -1) {
-                            perror("upstream send");
-                            continue;
-                        }
-
-                        request_payloads[upstreams[i].data.fd % MAX_CONNECTIONS] = &(struct dns_request_payload){listen_sock, client_addr};
-
-                        break;
+                    if (send(upstreams[upstream_socket].data.fd, msg, sizeof(msg), 0) == -1) {
+                        perror("upstream send");
+                        continue;
                     }
+
+                    request_payloads = &(struct dns_request_payload){
+                        listen_sock, upstreams[upstream_socket].data.fd, client_addr, request_payloads
+                    };
                 }
 
                 messages_count++;
