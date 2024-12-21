@@ -223,7 +223,7 @@ int main(const int argc, char *argv[]) {
 
     for (int i = 0; i < MAX_CONNECTIONS; i++) {
         if (add_fd_to_epoll(make_dns_socket(listen_ip_addr, true, true), listen_epfd,
-                            EPOLLIN | EPOLLOUT | EPOLLET | EPOLLHUP | EPOLLRDHUP) == -1) {
+                            EPOLLIN | EPOLLOUT | EPOLLHUP | EPOLLRDHUP | EPOLLET) == -1) {
             perror("epoll_ctl EPOLL_CTL_ADD listen");
             exit(EXIT_FAILURE);
         }
@@ -235,96 +235,109 @@ int main(const int argc, char *argv[]) {
         }
     }
 
+    size_t requests_count = 0;
     int ready_fds = 0;
+    struct epoll_event events[MAX_CONNECTIONS];
+
     while (true) {
-        struct epoll_event events[MAX_CONNECTIONS];
+        if (requests_count > 0) {
+            if ((ready_fds = epoll_wait(upstream_epfd, events, MAX_CONNECTIONS, 0)) == -1) {
+                perror("epoll_wait");
+            }
 
-        if ((ready_fds = epoll_wait(upstream_epfd, events, MAX_CONNECTIONS, 0)) == -1) {
-            perror("epoll_wait");
-        }
+            for (int i = 0; i < ready_fds; i++) {
+                size_t received = 0;
 
-        for (int i = 0; i < ready_fds; i++) {
-            size_t received = 0;
-
-            if (events[i].events & EPOLLERR) continue;
-            if (events[i].events & EPOLLHUP) continue;
-            if (events[i].events & EPOLLRDHUP) continue;
-            if ((events[i].events & EPOLLIN) == 0) continue;
-
-            do {
-                unsigned char msg[DNS_PACKET_MAX_LENGTH];
-
-                if ((received = recv(events[i].data.fd, msg, sizeof(msg), 0)) == -1) break;
-
-                struct dns_packet packet = {};
-                if (request_payloads[msg[0] * 0x100 + msg[1]] == NULL) break;
-                const struct dns_request_payload *payload = request_payloads[msg[0] * 0x100 + msg[1]];
-
-                if (dns_packet_parse(received, msg, &packet) != -1) {
-                    struct nftnl_set *ip4_set = nftnl_set_alloc();
-                    struct nftnl_set *ip6_set = nftnl_set_alloc();
-                    size_t ip4_size = 0;
-                    size_t ip6_size = 0;
-                    const struct dns_answer *cname = NULL;
-
-                    for (size_t j = 0; j < packet.answers_count; j++) {
-                        if (debug) {
-                            printf("domain: %s, rdata: %s\n", packet.answers[j].domain, packet.answers[j].data);
-                        }
-
-                        if (packet.answers[j].type == CNAME) {
-                            cname = &packet.answers[j];
-                            continue;
-                        }
-                        if (packet.answers[j].type != A && packet.answers[j].type != AAAA) continue;
-
-                        struct nftnl_set_elem *set_element = nftnl_set_elem_alloc();
-                        const bool ipv4 = packet.answers[j].type == A;
-
-                        if (!add_to_ipset(
-                                &domains,
-                                ipv4 ? ip4_set : ip6_set,
-                                set_element,
-                                cname, packet.answers[j])
-                        ) {
-                            nftnl_set_elem_free(set_element);
-                            continue;
-                        }
-
-                        if (ipv4) {
-                            ip4_size++;
-                        } else {
-                            ip6_size++;
-                        }
+                if (events[i].events & EPOLLERR || events[i].events & EPOLLHUP || events[i].events & EPOLLRDHUP) {
+                    close(events[i].data.fd);
+                    remove_fd_from_epoll(events[i].data.fd, upstream_epfd);
+                    if (add_fd_to_epoll(make_dns_socket(upstream_ip_addr, false, true), upstream_epfd,
+                                        EPOLLOUT | EPOLLIN | EPOLLERR | EPOLLHUP | EPOLLRDHUP) == -1) {
+                        perror("epoll_ctl EPOLL_CTL_ADD upstream");
                     }
 
-                    if (ip4_size != 0 || ip6_size != 0) {
-                        update_ipset(ip4_set, ip6_set, ip4_size, ip6_size, nl, mnl_socket_get_portid(nl), ipv4_name,
-                                     ipv6_name);
+                    continue;
+                }
+                if ((events[i].events & EPOLLIN) == 0) continue;
+
+                do {
+                    unsigned char msg[DNS_PACKET_MAX_LENGTH];
+
+                    if ((received = recv(events[i].data.fd, msg, sizeof(msg), 0)) == -1) {
+                        break;
                     }
 
-                    if (ip4_size == 0) nftnl_set_free(ip4_set);
-                    if (ip6_size == 0) nftnl_set_free(ip6_set);
-                }
-                dns_packet_free(&packet);
+                    requests_count--;
+                    struct dns_packet packet = {};
+                    if (request_payloads[msg[0] * 0x100 + msg[1]] == NULL) break;
+                    const struct dns_request_payload *payload = request_payloads[msg[0] * 0x100 + msg[1]];
 
-                if (sendto(
-                        payload->listen_fd,
-                        msg,
-                        received,
-                        0,
-                        &payload->addr,
-                        sizeof(payload->addr)) == -1
-                ) {
-                    perror("send back");
-                }
+                    if (dns_packet_parse(received, msg, &packet) != -1) {
+                        struct nftnl_set *ip4_set = nftnl_set_alloc();
+                        struct nftnl_set *ip6_set = nftnl_set_alloc();
+                        size_t ip4_size = 0;
+                        size_t ip6_size = 0;
+                        const struct dns_answer *cname = NULL;
 
-                listen_blocked[payload->listen_fd] = false;
-                request_payloads[msg[0] * 0x100 + msg[1]] = payload->next;
-            } while (received > 0);
+                        for (size_t j = 0; j < packet.answers_count; j++) {
+                            if (debug) {
+                                printf("domain: %s, rdata: %s\n", packet.answers[j].domain, packet.answers[j].data);
+                            }
+
+                            if (packet.answers[j].type == CNAME) {
+                                cname = &packet.answers[j];
+                                continue;
+                            }
+                            if (packet.answers[j].type != A && packet.answers[j].type != AAAA) continue;
+
+                            struct nftnl_set_elem *set_element = nftnl_set_elem_alloc();
+                            const bool ipv4 = packet.answers[j].type == A;
+
+                            if (!add_to_ipset(
+                                    &domains,
+                                    ipv4 ? ip4_set : ip6_set,
+                                    set_element,
+                                    cname, packet.answers[j])
+                            ) {
+                                nftnl_set_elem_free(set_element);
+                                continue;
+                            }
+
+                            if (ipv4) {
+                                ip4_size++;
+                            } else {
+                                ip6_size++;
+                            }
+                        }
+
+                        if (ip4_size != 0 || ip6_size != 0) {
+                            update_ipset(ip4_set, ip6_set, ip4_size, ip6_size, nl, mnl_socket_get_portid(nl), ipv4_name,
+                                         ipv6_name);
+                        }
+
+                        if (ip4_size == 0) nftnl_set_free(ip4_set);
+                        if (ip6_size == 0) nftnl_set_free(ip6_set);
+                    }
+                    dns_packet_free(&packet);
+
+                    if (sendto(
+                            payload->listen_fd,
+                            msg,
+                            received,
+                            0,
+                            &payload->addr,
+                            sizeof(payload->addr)) == -1
+                    ) {
+                        perror("send back");
+                    }
+
+                    listen_blocked[payload->listen_fd] = false;
+                    request_payloads[msg[0] * 0x100 + msg[1]] = payload->next;
+                } while (received > 0);
+            }
         }
 
-        if ((ready_fds = epoll_wait(listen_epfd, events, MAX_CONNECTIONS, 0)) == -1) {
+        if ((ready_fds = epoll_wait(listen_epfd, events, MAX_CONNECTIONS, 1)) == -1) {
             perror("epoll_wait");
         }
 
@@ -345,6 +358,7 @@ int main(const int argc, char *argv[]) {
             if ((received = recvfrom(listen_sock, msg, sizeof(msg), 0,
                                      &client_addr,
                                      &client_addr_len)) == -1) {
+                perror("recvfrom");
                 break;
             }
 
@@ -365,6 +379,7 @@ int main(const int argc, char *argv[]) {
                         request_payloads[msg[0] * 0x100 + msg[1]]->next = &new_payload;
                     }
 
+                    requests_count++;
                     request_payloads[msg[0] * 0x100 + msg[1]] = &new_payload;
                     listen_blocked[listen_sock] = true;
 
