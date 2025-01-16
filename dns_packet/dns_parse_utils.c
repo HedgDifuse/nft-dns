@@ -34,7 +34,7 @@ char *dns_parse_domain(
                  : calloc((link_index == -1 ? size : 0) + add_dot + 1, sizeof(char));
 
         if (add_dot) {
-            strncat(domain + prev_size, ".", 1);
+            strcat(domain + prev_size, ".");
         }
 
         if (link_index != -1) {
@@ -87,7 +87,7 @@ char *dns_parse_rdata(
                 strncat(result, segment, strlen(segment));
 
                 if (!last_segment) {
-                    strncat(result, ".", 1);
+                    strcat(result, ".");
                 }
 
                 result_size += strlen(segment) + !last_segment;
@@ -110,7 +110,7 @@ char *dns_parse_rdata(
                 strncat(result, segment, strlen(segment));
 
                 if (!last_segment) {
-                    strncat(result, ":", 1);
+                    strcat(result, ":");
                 }
 
                 result_size += strlen(segment) + !last_segment;

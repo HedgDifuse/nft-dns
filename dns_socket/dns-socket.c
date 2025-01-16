@@ -7,6 +7,9 @@
 #include <sys/time.h>
 #include <fcntl.h>
 
+#include "dns_socket.h"
+#include "../dns_packet/dns_types.h"
+
 struct sockaddr_in make_dns_socket_addr(char *address_and_port) {
     struct sockaddr_in address;
 
@@ -26,26 +29,38 @@ int make_dns_socket(char *address_and_port, bool self, bool non_blocking) {
 
     const struct sockaddr_in address = make_dns_socket_addr(address_and_port);
 
-    if (non_blocking && fcntl(descriptor, F_SETFL, fcntl(descriptor, F_GETFL, 0) | O_NONBLOCK) < 0) {
-        perror("fcntl");
-        return -1;
-    }
-
     const int reuse_addr = 1;
-    if (setsockopt(descriptor, SOL_SOCKET, SO_REUSEADDR | SO_REUSEPORT, &reuse_addr, sizeof(reuse_addr)) < 0) {
+    if (setsockopt(descriptor, SOL_SOCKET, SO_REUSEADDR, &reuse_addr, sizeof(reuse_addr)) < 0) {
         perror("setsockopt");
         return -1;
     }
 
-    struct timeval rcv_time = { 3, 0 };
-    if (setsockopt(descriptor, SOL_SOCKET, SO_RCVTIMEO, &rcv_time, sizeof(rcv_time))) {
-        perror("setsockopt SO_RCVTIMEO");
+    struct timeval rcv_tv = { 60, 0 };
+    if (setsockopt(descriptor, SOL_SOCKET, SO_RCVTIMEO, &rcv_tv, sizeof(rcv_tv)) < 0) {
+        perror("setsockopt");
         return -1;
     }
 
-    struct timeval snd_time = { 3, 0 };
-    if (setsockopt(descriptor, SOL_SOCKET, SO_SNDTIMEO, &snd_time, sizeof(snd_time))) {
-        perror("setsockopt SO_SNDTIMEO");
+    struct timeval snd_tv = { 60, 0 };
+    if (setsockopt(descriptor, SOL_SOCKET, SO_SNDTIMEO, &snd_tv, sizeof(snd_tv)) < 0) {
+        perror("setsockopt");
+        return -1;
+    }
+
+    const size_t rcvbuf = DNS_PACKET_MAX_LENGTH * MAX_CONNECTIONS;
+    if (setsockopt(descriptor, SOL_SOCKET, SO_RCVBUFFORCE, &rcvbuf, sizeof(rcvbuf)) < 0) {
+        perror("setsockopt");
+        return -1;
+    }
+
+    const size_t sndbuf = DNS_PACKET_MAX_LENGTH * MAX_CONNECTIONS;
+    if (setsockopt(descriptor, SOL_SOCKET, SO_SNDBUFFORCE, &sndbuf, sizeof(sndbuf)) < 0) {
+        perror("setsockopt");
+        return -1;
+    }
+
+    if (non_blocking && fcntl(descriptor, F_SETFL, fcntl(descriptor, F_GETFL) | O_NONBLOCK) < 0) {
+        perror("fcntl");
         return -1;
     }
 
