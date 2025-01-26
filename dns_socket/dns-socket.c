@@ -1,4 +1,4 @@
-
+#include <errno.h>
 #include <arpa/inet.h>
 #include <string.h>
 #include <stdlib.h>
@@ -6,6 +6,8 @@
 #include <stdbool.h>
 #include <sys/time.h>
 #include <fcntl.h>
+#include <asm-generic/errno.h>
+#include <netinet/tcp.h>
 
 #include "dns_socket.h"
 #include "../dns_packet/dns_types.h"
@@ -22,39 +24,27 @@ struct sockaddr_in make_dns_socket_addr(char *address_and_port) {
     return address;
 }
 
-int make_dns_socket(char *address_and_port, bool self, bool non_blocking) {
-    const int descriptor = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+int make_dns_socket(char *address_and_port, const bool self, const bool non_blocking, const bool tcp) {
+    const int descriptor = tcp
+                               ? socket(AF_INET, SOCK_STREAM, IPPROTO_TCP)
+                               : socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
 
     if (!descriptor) return -1;
 
     const struct sockaddr_in address = make_dns_socket_addr(address_and_port);
 
     const int reuse_addr = 1;
-    if (setsockopt(descriptor, SOL_SOCKET, SO_REUSEADDR, &reuse_addr, sizeof(reuse_addr)) < 0) {
-        perror("setsockopt");
-        return -1;
-    }
+    const struct timeval rcv_tv = {60, 0},
+            snd_tv = {60, 0};
+    const size_t rcv_buf = DNS_PACKET_MAX_LENGTH,
+            snd_buf = DNS_PACKET_MAX_LENGTH;
 
-    struct timeval rcv_tv = { 60, 0 };
-    if (setsockopt(descriptor, SOL_SOCKET, SO_RCVTIMEO, &rcv_tv, sizeof(rcv_tv)) < 0) {
-        perror("setsockopt");
-        return -1;
-    }
-
-    struct timeval snd_tv = { 60, 0 };
-    if (setsockopt(descriptor, SOL_SOCKET, SO_SNDTIMEO, &snd_tv, sizeof(snd_tv)) < 0) {
-        perror("setsockopt");
-        return -1;
-    }
-
-    const size_t rcvbuf = DNS_PACKET_MAX_LENGTH * MAX_CONNECTIONS;
-    if (setsockopt(descriptor, SOL_SOCKET, SO_RCVBUFFORCE, &rcvbuf, sizeof(rcvbuf)) < 0) {
-        perror("setsockopt");
-        return -1;
-    }
-
-    const size_t sndbuf = DNS_PACKET_MAX_LENGTH * MAX_CONNECTIONS;
-    if (setsockopt(descriptor, SOL_SOCKET, SO_SNDBUFFORCE, &sndbuf, sizeof(sndbuf)) < 0) {
+    if (setsockopt(descriptor, SOL_SOCKET, SO_REUSEADDR, &reuse_addr, sizeof(reuse_addr)) < 0 ||
+        setsockopt(descriptor, SOL_SOCKET, SO_RCVTIMEO, &rcv_tv, sizeof(rcv_tv)) < 0 ||
+        setsockopt(descriptor, SOL_SOCKET, SO_SNDTIMEO, &snd_tv, sizeof(snd_tv)) < 0 ||
+        setsockopt(descriptor, SOL_SOCKET, SO_RCVBUFFORCE, &rcv_buf, sizeof(rcv_buf)) < 0 ||
+        setsockopt(descriptor, SOL_SOCKET, SO_SNDBUFFORCE, &snd_buf, sizeof(snd_buf)) < 0
+    ) {
         perror("setsockopt");
         return -1;
     }
@@ -64,13 +54,32 @@ int make_dns_socket(char *address_and_port, bool self, bool non_blocking) {
         return -1;
     }
 
+    if (tcp) {
+        const int keepalive = 1,
+                idle = 1,
+                interval = 1,
+                maxpkt = 10;
+
+        if (setsockopt(descriptor, SOL_SOCKET, SO_KEEPALIVE, &keepalive, sizeof(int)) < 0 ||
+            setsockopt(descriptor, IPPROTO_TCP, TCP_KEEPIDLE, &idle, sizeof(int)) < 0 ||
+            setsockopt(descriptor, IPPROTO_TCP, TCP_KEEPINTVL, &interval, sizeof(int)) < 0 ||
+            setsockopt(descriptor, IPPROTO_TCP, TCP_KEEPCNT, &maxpkt, sizeof(int)) < 0
+        ) {
+            perror("setsockopt");
+            return -1;
+        }
+    }
+
     if (self && bind(descriptor, (const struct sockaddr *) &address, sizeof(address)) < 0) {
+        fprintf(stderr, "bind %s\n ", address_and_port);
         perror("bind");
         exit(EXIT_FAILURE);
     }
     if (!self && connect(descriptor, (const struct sockaddr *) &address, sizeof(address)) < 0) {
-        perror("connect");
-        return -1;
+        if (errno != EINPROGRESS) {
+            perror("connect");
+            return -1;
+        }
     }
 
     return descriptor;

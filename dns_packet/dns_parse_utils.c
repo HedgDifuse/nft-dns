@@ -42,11 +42,12 @@ char *dns_parse_domain(
 
             size_t j = raw_packet[link_index];
             const char *link = dns_parse_domain(packet_length, max_segment_count, raw_packet, &j, max_recursion_depth - 1);
+            const size_t link_len = link != NULL ? strlen(link) : 0;
 
             domain = domain != NULL
-                ? reallocarray(domain, strlen(domain) + strlen(link) + 1, sizeof(char))
-                : calloc(strlen(link) + 1, sizeof(char));
-            strncat(domain, link, strlen(link));
+                ? reallocarray(domain, strlen(domain) + link_len + 1, sizeof(char))
+                : calloc(link_len + 1, sizeof(char));
+            strncat(domain, link, link_len);
             free(link);
             break;
         }
