@@ -283,7 +283,6 @@ int main(const int argc, char *argv[]) {
             size_t received = 0;
 
             if (events[i].events & EPOLLERR ||
-                events[i].events & EPOLLHUP ||
                 events[i].events & EPOLLRDHUP
             ) {
                 shutdown(events[i].data.fd, SHUT_RDWR);
@@ -420,7 +419,7 @@ int main(const int argc, char *argv[]) {
                         FD_SET(new_client, &tcp_client_fds);
 
                         add_fd_to_epoll(new_client, epfd,
-                                        EPOLLIN | EPOLLPRI | EPOLLERR | EPOLLHUP | EPOLLRDHUP);
+                                        EPOLLIN | EPOLLERR | EPOLLRDHUP);
 
                         current_tcp_clients_size++;
                         listen_socket = new_client;
@@ -433,7 +432,7 @@ int main(const int argc, char *argv[]) {
 
                     FD_SET(upstream_client_socket, &tcp_upstream_fds);
                     add_fd_to_epoll(upstream_client_socket, epfd,
-                                    EPOLLIN | EPOLLPRI | EPOLLERR | EPOLLHUP | EPOLLRDHUP);
+                                    EPOLLIN | EPOLLERR | EPOLLRDHUP);
                 }
 
                 const bool is_tcp = events[i].data.fd == listen_tcp_socket || FD_ISSET(listen_socket, &tcp_client_fds);
