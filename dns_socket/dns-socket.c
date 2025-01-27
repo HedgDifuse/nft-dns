@@ -34,8 +34,8 @@ int make_dns_socket(char *address_and_port, const bool self, const bool non_bloc
     const struct sockaddr_in address = make_dns_socket_addr(address_and_port);
 
     const int reuse_addr = 1;
-    const struct timeval rcv_tv = {60, 0},
-            snd_tv = {60, 0};
+    const struct timeval rcv_tv = {10, 0},
+            snd_tv = {10, 0};
     const size_t rcv_buf = DNS_PACKET_MAX_LENGTH,
             snd_buf = DNS_PACKET_MAX_LENGTH;
 
