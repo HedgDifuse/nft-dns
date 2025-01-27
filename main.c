@@ -155,6 +155,16 @@ struct dns_request_payload {
     struct dns_request_payload *next;
 };
 
+struct dns_sent_request_payload {
+    int upstream_sock;
+    int listen_sock;
+
+    size_t msg_size;
+    unsigned char *msg;
+
+    struct dns_sent_request_payload *next;
+};
+
 int add_fd_to_epoll(const int listen_fd, const int epfd, const int events) {
     struct epoll_event event = {
         .events = events,
@@ -171,10 +181,11 @@ int remove_fd_from_epoll(const int fd, const int epfd) {
 int main(const int argc, char *argv[]) {
     int option_index = 0;
 
-    char *ipv4_name = NULL,
-            *ipv6_name = NULL,
-            *listen_ip_addr = NULL,
+    char *listen_ip_addr = NULL,
             *upstream_ip_addr = NULL;
+
+    const char *ipv6_name = NULL,
+            *ipv4_name = NULL;
 
     while (getopt_long(argc, argv, "l:u:f:s:d", options, &option_index) >= 0) {
         switch (option_index) {
@@ -227,41 +238,77 @@ int main(const int argc, char *argv[]) {
 
     make_domains_daemon(&domains);
 
-    struct dns_request_payload request_payloads[0x10000] = {{-1}};
+    struct dns_request_payload request_payloads[0x10000] = { [0 ... 0x9999] = {-1}};
 
+    int upstreams_per_client[MAX_CONNECTIONS * 2] = {  [0 ... 499] = -1 };
     const int epfd = epoll_create1(0);
 
-    const int listen_socket = make_dns_socket(listen_ip_addr, true, true);
-    const int upstream_socket = make_dns_socket(upstream_ip_addr, false, true);
+    const int listen_udp_socket = make_dns_socket(listen_ip_addr, true, true, false),
+            listen_tcp_socket = make_dns_socket(listen_ip_addr, true, true, true),
+            upstream_udp_socket = make_dns_socket(upstream_ip_addr, false, true, false);
 
-    if (add_fd_to_epoll(listen_socket, epfd,
+    if (add_fd_to_epoll(listen_udp_socket, epfd,
                         EPOLLIN | EPOLLET) == -1) {
         perror("epoll_ctl EPOLL_CTL_ADD listen");
         exit(EXIT_FAILURE);
     }
 
-    if (add_fd_to_epoll(upstream_socket, epfd,
+    if (add_fd_to_epoll(listen_tcp_socket, epfd,
+                        EPOLLIN | EPOLLOUT) == -1) {
+        perror("epoll_ctl EPOLL_CTL_ADD listen");
+        exit(EXIT_FAILURE);
+    }
+
+    if (add_fd_to_epoll(upstream_udp_socket, epfd,
                         EPOLLIN | EPOLLET) == -1) {
         perror("epoll_ctl EPOLL_CTL_ADD listen");
         exit(EXIT_FAILURE);
     }
+
+    listen(listen_tcp_socket, MAX_CONNECTIONS);
+
+    fd_set tcp_client_fds, tcp_upstream_fds;
+    size_t current_tcp_clients_size = 0;
 
     while (true) {
-        struct epoll_event events[2];
+        struct epoll_event events[MAX_CONNECTIONS + 4];
         int ready_fds = 0;
 
-        if ((ready_fds = epoll_wait(epfd, events, 2, -1)) == -1) {
+        if ((ready_fds = epoll_wait(epfd, events, MAX_CONNECTIONS + 4, -1)) == -1) {
             perror("epoll_wait");
         }
 
         for (int i = 0; i < ready_fds; i++) {
             size_t received = 0;
 
-            if (events[i].data.fd == upstream_socket) {
+            if (events[i].events & EPOLLERR ||
+                events[i].events & EPOLLHUP ||
+                events[i].events & EPOLLRDHUP
+            ) {
+                close(events[i].data.fd);
+                remove_fd_from_epoll(events[i].data.fd, epfd);
+
+                if (FD_ISSET(events[i].data.fd, &tcp_upstream_fds)) {
+                    FD_CLR(events[i].data.fd, &tcp_upstream_fds);
+                } else if (FD_ISSET(events[i].data.fd, &tcp_client_fds)) {
+                    int upstream_sock = upstreams_per_client[events[i].data.fd % (MAX_CONNECTIONS * 2)];
+
+                    close(upstream_sock);
+                    remove_fd_from_epoll(upstream_sock, epfd);
+
+                    FD_CLR(upstream_sock, &tcp_upstream_fds);
+                    FD_CLR(events[i].data.fd, &tcp_client_fds);
+                    current_tcp_clients_size--;
+                }
+
+                continue;
+            }
+
+            if (events[i].data.fd == upstream_udp_socket || FD_ISSET(events[i].data.fd, &tcp_upstream_fds)) {
                 do {
                     unsigned char msg[DNS_PACKET_MAX_LENGTH];
 
-                    if ((received = recv(upstream_socket, msg, sizeof(msg), 0)) == -1) {
+                    if ((received = read(events[i].data.fd, &msg, sizeof(msg))) == -1) {
                         if (errno != EAGAIN) {
                             perror("upstream recv: ");
                             fprintf(stderr, "upstream recv: %d\n", errno);
@@ -269,11 +316,23 @@ int main(const int argc, char *argv[]) {
                         break;
                     }
 
-                    struct dns_packet packet = {};
-                    if (request_payloads[msg[0] * 0x100 + msg[1]].listen_sock == -1) break;
-                    const struct dns_request_payload payload = request_payloads[msg[0] * 0x100 + msg[1]];
+                    if (debug) {
+                        fprintf(stderr, "answer: %lu \n", received);
+                        for (int j = 0; j < received; j++) {
+                            fprintf(stderr, "%02x ", msg[j]);
+                        }
+                        fprintf(stderr, "\n");
+                    }
 
-                    if (dns_packet_parse(received, msg, &packet) != -1) {
+                    if (received == 0) break;
+
+                    const int offset = FD_ISSET(events[i].data.fd, &tcp_upstream_fds) ? 2 : 0;
+
+                    struct dns_packet packet = {};
+                    if (request_payloads[msg[offset] * 0x100 + msg[offset + 1]].listen_sock == -1) break;
+                    const struct dns_request_payload payload = request_payloads[msg[offset] * 0x100 + msg[offset + 1]];
+
+                    if (dns_packet_parse(received - offset, msg + offset, &packet) != -1) {
                         struct nftnl_set *ip4_set = nftnl_set_alloc();
                         struct nftnl_set *ip6_set = nftnl_set_alloc();
                         size_t ip4_size = 0;
@@ -321,7 +380,11 @@ int main(const int argc, char *argv[]) {
                     }
                     dns_packet_free(&packet);
 
-                    if (sendto(
+                    if (FD_ISSET(events[i].data.fd, &tcp_upstream_fds)) {
+                        if (write(payload.listen_sock, msg, received) < 0) {
+                            perror("send back");
+                        }
+                    } else if (sendto(
                             payload.listen_sock,
                             msg,
                             received,
@@ -331,20 +394,59 @@ int main(const int argc, char *argv[]) {
                         perror("send back");
                     }
 
-                    request_payloads[msg[0] * 0x100 + msg[1]] = (payload.next == NULL)
-                                                                    ? ((struct dns_request_payload){-1})
-                                                                    : *payload.next;
-                } while (received > 0);
+                    request_payloads[msg[offset] * 0x100 + msg[offset + 1]] = (payload.next == NULL)
+                                                                                  ? ((struct dns_request_payload){-1})
+                                                                                  : *payload.next;
+                } while (received > 0 && !FD_ISSET(events[i].data.fd, &tcp_upstream_fds));
             } else {
                 struct sockaddr client_addr;
                 socklen_t client_addr_len = sizeof(client_addr);
+                int listen_socket = events[i].data.fd, upstream_client_socket = upstreams_per_client[events[i].data.fd % (MAX_CONNECTIONS * 2)];
+
+                if (current_tcp_clients_size < MAX_CONNECTIONS && events[i].data.fd == listen_tcp_socket) {
+                    const int new_client = accept4(listen_tcp_socket, &client_addr, &client_addr_len, SOCK_NONBLOCK);
+
+                    if (fcntl(new_client, F_SETFL, fcntl(new_client, F_GETFL) | O_NONBLOCK) < 0) {
+                        perror("fcntl");
+                    }
+
+                    if (new_client < 0) {
+                        if (errno != EAGAIN) perror("accept4: ");
+                    } else {
+                        upstream_client_socket = make_dns_socket(upstream_ip_addr, false, true, true);
+                        upstreams_per_client[new_client % (MAX_CONNECTIONS * 2)] = upstream_client_socket;
+
+                        FD_SET(upstream_client_socket, &tcp_upstream_fds);
+                        FD_SET(new_client, &tcp_client_fds);
+
+                        add_fd_to_epoll(new_client, epfd,
+                                        EPOLLIN | EPOLLPRI | EPOLLERR | EPOLLHUP | EPOLLRDHUP);
+                        add_fd_to_epoll(upstream_client_socket, epfd,
+                                        EPOLLIN | EPOLLPRI | EPOLLERR | EPOLLHUP | EPOLLRDHUP);
+
+                        current_tcp_clients_size++;
+                        listen_socket = new_client;
+                    }
+                }
+
+                const bool is_tcp = events[i].data.fd == listen_tcp_socket || FD_ISSET(listen_socket, &tcp_client_fds);
 
                 do {
                     unsigned char msg[DNS_PACKET_MAX_LENGTH];
-                    if ((received = recvfrom(listen_socket, msg, sizeof(msg), 0,
-                                             &client_addr,
-                                             &client_addr_len)) == -1) {
-                        if (errno != EAGAIN) {
+
+                    if (is_tcp) {
+                        if ((received = recv(listen_socket, msg, sizeof(msg), MSG_PEEK)) == -1) {
+                            if (errno != EAGAIN && errno != ENOTCONN) {
+                                perror("listen recv: ");
+                                fprintf(stderr, "listen recv: %d\n", errno);
+                            }
+
+                            break;
+                        }
+                    } else if ((received = recvfrom(listen_socket, msg, sizeof(msg), 0,
+                                                    &client_addr,
+                                                    &client_addr_len)) == -1) {
+                        if (errno != EAGAIN && errno != ENOTCONN) {
                             perror("listen recv: ");
                             fprintf(stderr, "listen recv: %d\n", errno);
                         }
@@ -352,19 +454,28 @@ int main(const int argc, char *argv[]) {
                         break;
                     }
 
-                    if (send(upstream_socket, msg, received, 0) == -1) {
-                        perror("send upstream");
+                    if (write(is_tcp ? upstream_client_socket : upstream_udp_socket, msg, received) < 0) {
+                        if (errno == EAGAIN && is_tcp) continue;
+
+                        perror("send upstream udp");
+                        if (is_tcp) recv(listen_socket, msg, sizeof(msg), 0);
+
                         continue;
                     }
 
-                    struct dns_request_payload new_payload = {listen_socket, client_addr_len, client_addr, NULL};
+                    const int offset = is_tcp ? 2 : 0;
 
-                    if (request_payloads[msg[0] * 0x100 + msg[1]].listen_sock != -1) {
-                        request_payloads[msg[0] * 0x100 + msg[1]].next = &new_payload;
+                    struct dns_request_payload new_payload = {
+                        listen_socket, client_addr_len, client_addr, NULL
+                    };
+
+                    if (request_payloads[msg[offset] * 0x100 + msg[offset + 1]].listen_sock != -1) {
+                        request_payloads[msg[offset] * 0x100 + msg[offset + 1]].next = &new_payload;
                     }
 
-                    request_payloads[msg[0] * 0x100 + msg[1]] = new_payload;
-                } while (received > 0);
+                    request_payloads[msg[offset] * 0x100 + msg[offset + 1]] = new_payload;
+                    if (is_tcp) recv(listen_socket, msg, sizeof(msg), 0);
+                } while (received > 0 && !is_tcp);
             }
         }
     }

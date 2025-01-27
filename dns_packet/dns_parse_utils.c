@@ -41,12 +41,13 @@ char *dns_parse_domain(
             if (link_index >= packet_length || max_recursion_depth == 0) break;
 
             size_t j = raw_packet[link_index];
-            const char *link = dns_parse_domain(packet_length, max_segment_count, raw_packet, &j, max_recursion_depth - 1);
+            char *link = dns_parse_domain(packet_length, max_segment_count, raw_packet, &j, max_recursion_depth - 1);
+            const size_t link_len = link != NULL ? strlen(link) : 0;
 
             domain = domain != NULL
-                ? reallocarray(domain, strlen(domain) + strlen(link) + 1, sizeof(char))
-                : calloc(strlen(link) + 1, sizeof(char));
-            strncat(domain, link, strlen(link));
+                ? reallocarray(domain, strlen(domain) + link_len + 1, sizeof(char))
+                : calloc(link_len + 1, sizeof(char));
+            strncat(domain, link, link_len);
             free(link);
             break;
         }
@@ -84,7 +85,7 @@ char *dns_parse_rdata(
                              ? reallocarray(result, result_size + strlen(segment) + !last_segment + 1, sizeof(char))
                              : calloc(strlen(segment) + !last_segment + 1, sizeof(char));
 
-                strncat(result, segment, strlen(segment));
+                strcat(result, segment);
 
                 if (!last_segment) {
                     strcat(result, ".");
@@ -107,7 +108,7 @@ char *dns_parse_rdata(
                     ? reallocarray(result, result_size + strlen(segment) + !last_segment + 1, sizeof(char))
                     : calloc(strlen(segment) + !last_segment + 1, sizeof(char));
 
-                strncat(result, segment, strlen(segment));
+                strcat(result, segment);
 
                 if (!last_segment) {
                     strcat(result, ":");

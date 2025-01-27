@@ -12,6 +12,8 @@ link_directories(
         $ENV{TARGET_DIR}/usr/lib
 )
 
+set(CMAKE_C_FLAGS_RELEASE_INIT "${CMAKE_C_FLAGS_RELEASE_INIT} -O2")
+
 link_libraries(nftnl mnl)
 
 add_executable(nft-dns main.c

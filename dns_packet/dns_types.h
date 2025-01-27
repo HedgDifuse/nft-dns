@@ -1,10 +1,11 @@
 #pragma once
 #include "stdbool.h"
+#include "limits.h"
 
 #ifndef NFT_DNS_TYPES_H
 #define NFT_DNS_TYPES_H
 
-#define DNS_PACKET_MAX_LENGTH 16384
+#define DNS_PACKET_MAX_LENGTH USHRT_MAX
 
 enum dns_return_code {
     NOERROR = 0,
