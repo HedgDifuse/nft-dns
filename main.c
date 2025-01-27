@@ -238,14 +238,15 @@ int main(const int argc, char *argv[]) {
 
     make_domains_daemon(&domains);
 
-    struct dns_request_payload request_payloads[0x10000] = { [0 ... 0x9999] = {-1}};
+    struct dns_request_payload request_payloads[0x10000] = {[0 ... 0x9999] = {-1}};
 
-    int upstreams_per_client[MAX_CONNECTIONS * 2] = {  [0 ... 499] = -1 };
+    int upstreams_per_client[MAX_CONNECTIONS * 2] = {[0 ... 499] = -1};
     const int epfd = epoll_create1(0);
 
     const int listen_udp_socket = make_dns_socket(listen_ip_addr, true, true, false),
-            listen_tcp_socket = make_dns_socket(listen_ip_addr, true, true, true),
-            upstream_udp_socket = make_dns_socket(upstream_ip_addr, false, true, false);
+            listen_tcp_socket = make_dns_socket(listen_ip_addr, true, true, true);
+
+    int upstream_udp_socket = make_dns_socket(upstream_ip_addr, false, true, false);
 
     if (add_fd_to_epoll(listen_udp_socket, epfd,
                         EPOLLIN | EPOLLET) == -1) {
@@ -387,12 +388,12 @@ int main(const int argc, char *argv[]) {
                             perror("send back");
                         }
                     } else if (sendto(
-                            payload.listen_sock,
-                            msg,
-                            received,
-                            0,
-                            &payload.addr,
-                            payload.addr_len) == -1) {
+                                   payload.listen_sock,
+                                   msg,
+                                   received,
+                                   0,
+                                   &payload.addr,
+                                   payload.addr_len) == -1) {
                         perror("send back");
                     }
 
@@ -403,7 +404,8 @@ int main(const int argc, char *argv[]) {
             } else {
                 struct sockaddr client_addr;
                 socklen_t client_addr_len = sizeof(client_addr);
-                int listen_socket = events[i].data.fd, upstream_client_socket = upstreams_per_client[events[i].data.fd % (MAX_CONNECTIONS * 2)];
+                int listen_socket = events[i].data.fd, upstream_client_socket = upstreams_per_client[
+                    events[i].data.fd % (MAX_CONNECTIONS * 2)];
 
                 if (current_tcp_clients_size < MAX_CONNECTIONS && events[i].data.fd == listen_tcp_socket) {
                     const int new_client = accept4(listen_tcp_socket, &client_addr, &client_addr_len, SOCK_NONBLOCK);
@@ -431,7 +433,7 @@ int main(const int argc, char *argv[]) {
 
                     FD_SET(upstream_client_socket, &tcp_upstream_fds);
                     add_fd_to_epoll(upstream_client_socket, epfd,
-                                        EPOLLIN | EPOLLPRI | EPOLLERR | EPOLLHUP | EPOLLRDHUP);
+                                    EPOLLIN | EPOLLPRI | EPOLLERR | EPOLLHUP | EPOLLRDHUP);
                 }
 
                 const bool is_tcp = events[i].data.fd == listen_tcp_socket || FD_ISSET(listen_socket, &tcp_client_fds);
@@ -448,7 +450,7 @@ int main(const int argc, char *argv[]) {
 
                             break;
                         }
-                    } else if ((received = recvfrom(listen_socket, msg, sizeof(msg), 0,
+                    } else if ((received = recvfrom(listen_socket, msg, sizeof(msg), MSG_PEEK,
                                                     &client_addr,
                                                     &client_addr_len)) == -1) {
                         if (errno != EAGAIN && errno != ENOTCONN) {
@@ -469,9 +471,22 @@ int main(const int argc, char *argv[]) {
 
                             continue;
                         }
+                        if (errno == EBADF && !is_tcp) {
+                            shutdown(upstream_udp_socket, SHUT_RDWR);
+                            close(upstream_udp_socket);
+                            remove_fd_from_epoll(upstream_udp_socket, epfd);
 
-                        perror("send upstream udp");
-                        if (is_tcp) recv(listen_socket, msg, sizeof(msg), 0);
+                            upstream_udp_socket = make_dns_socket(upstream_ip_addr, false, true, false);
+                            if (add_fd_to_epoll(upstream_udp_socket, epfd,
+                                                EPOLLIN | EPOLLET) == -1) {
+                                perror("epoll_ctl EPOLL_CTL_ADD listen");
+                                exit(EXIT_FAILURE);
+                            }
+                            continue;
+                        }
+
+                        perror("send upstream");
+                        recv(listen_socket, msg, sizeof(msg), 0);
 
                         continue;
                     }
@@ -487,7 +502,7 @@ int main(const int argc, char *argv[]) {
                     }
 
                     request_payloads[msg[offset] * 0x100 + msg[offset + 1]] = new_payload;
-                    if (is_tcp) recv(listen_socket, msg, sizeof(msg), 0);
+                    recv(listen_socket, msg, sizeof(msg), 0);
                 } while (received > 0);
             }
         }
