@@ -12,7 +12,7 @@ link_directories(
         $ENV{TARGET_DIR}/usr/lib
 )
 
-set(CMAKE_C_FLAGS_RELEASE_INIT "${CMAKE_C_FLAGS_RELEASE_INIT} -O2")
+set(CMAKE_C_FLAGS_RELEASE_INIT "${CMAKE_C_FLAGS_RELEASE_INIT} -O3")
 
 link_libraries(nftnl mnl)
 
