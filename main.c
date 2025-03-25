@@ -11,6 +11,8 @@
 #include <sys/socket.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <sys/select.h>
+
 #include "dns_packet/dns_parse_utils.h"
 #include "dns_socket/dns_socket.h"
 #include "filedaemon/filedaemon.h"
@@ -21,7 +23,7 @@ static bool debug = false;
 
 static const struct option options[] = {
     {"listen", true, NULL, 0},
-    {"upstream", true, NULL, 0},
+    {"dns", true, NULL, 0},
     {"ip4_set", true, NULL, 0},
     {"ip6_set", true, NULL, 0},
     {"debug", false, NULL, 0},
@@ -57,6 +59,7 @@ bool add_to_ipset(
 
             if (hashset_is_member(*domains, strhash(domain + i))) {
                 can_process = true;
+                break;
             }
         }
     }
@@ -104,7 +107,7 @@ void update_ipset(
         struct nlmsghdr *nlh = nftnl_nlmsg_build_hdr(mnl_nlmsg_batch_current(batch),
                                                      NFT_MSG_NEWSETELEM,
                                                      NFPROTO_INET,
-                                                     NLM_F_APPEND,
+                                                     NLM_F_CREATE | NLM_F_REPLACE,
                                                      seq++);
 
         nftnl_set_elems_nlmsg_build_payload(nlh, ip4_set);
@@ -117,7 +120,7 @@ void update_ipset(
         struct nlmsghdr *nlh = nftnl_nlmsg_build_hdr(mnl_nlmsg_batch_current(batch),
                                                      NFT_MSG_NEWSETELEM,
                                                      NFPROTO_INET,
-                                                     NLM_F_APPEND,
+                                                     NLM_F_CREATE | NLM_F_REPLACE,
                                                      seq++);
 
         nftnl_set_elems_nlmsg_build_payload(nlh, ip6_set);
@@ -357,18 +360,45 @@ int main(const int argc, char *argv[]) {
                     if (payload.listen_sock == -1) break;
 
                     if (dns_packet_parse(received - offset, msg + offset, &packet) != -1) {
-                        struct nftnl_set *ip4_set = nftnl_set_alloc();
-                        struct nftnl_set *ip6_set = nftnl_set_alloc();
-                        size_t ip4_size = 0;
-                        size_t ip6_size = 0;
+                        struct nftnl_set *ip4_set = nftnl_set_alloc(),
+                                        *ip6_set = nftnl_set_alloc();
+                        size_t ip4_size = 0,
+                                ip6_size = 0,
+                                cnames_count = 0;
+
                         const struct dns_answer *cname = NULL;
+
+                        for (size_t j = 0; j < packet.answers_count; j++) {
+                            if (packet.answers[j].type != CNAME) continue;
+
+                            cnames_count++;
+                        }
+
+                        if (cnames_count > 0) {
+                            char* cnames = calloc(cnames_count, sizeof(char));
+
+                            for (size_t j = 0; j < packet.answers_count; j++) {
+                                if (packet.answers[j].type != CNAME) continue;
+
+                                cnames[strhash(packet.answers[j].data) % cnames_count] = 1;
+                            }
+
+                            for (size_t j = 0; j < packet.answers_count; j++) {
+                                if (packet.answers[j].type != CNAME) continue;
+                                if (cnames[strhash(packet.answers[j].domain) % cnames_count] == 0) {
+                                    cname = &packet.answers[j];
+                                }
+                            }
+
+                            free(cnames);
+                        }
 
                         for (size_t j = 0; j < packet.answers_count; j++) {
                             if (debug) {
                                 printf("domain: %s, rdata: %s\n", packet.answers[j].domain, packet.answers[j].data);
                             }
 
-                            if (packet.answers[j].type == CNAME) {
+                            if (packet.answers[j].type == CNAME && cname == NULL) {
                                 cname = &packet.answers[j];
                                 continue;
                             }
@@ -376,6 +406,10 @@ int main(const int argc, char *argv[]) {
 
                             struct nftnl_set_elem *set_element = nftnl_set_elem_alloc();
                             const bool ipv4 = packet.answers[j].type == A;
+
+                            if (debug && cname != NULL) {
+                                printf("cname domain: %s : %s\n", cname->domain, cname->data);
+                            }
 
                             if (!add_to_ipset(
                                     &domains,
@@ -528,7 +562,6 @@ int main(const int argc, char *argv[]) {
 
                         continue;
                     }
-
 
                     struct dns_request_payload new_payload = {
                         listen_socket, client_addr_len, client_addr, NULL

@@ -34,6 +34,8 @@ static char *url_only(const char *input, const size_t length) {
 _Noreturn void domains_daemon(const volatile hashset_t *domains) {
     printf("Start domains reading...\n");
 
+    nice(19);
+
     unsigned long previous_size = 0;
     time_t prev_mtim = 0;
 

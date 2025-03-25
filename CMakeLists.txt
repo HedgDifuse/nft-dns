@@ -2,6 +2,7 @@ cmake_minimum_required(VERSION 3.1...3.27)
 project(nft-dns C)
 
 set(CMAKE_C_STANDARD 23)
+add_compile_options(-O3)
 
 include_directories(
         $ENV{TARGET_DIR}/usr/include
