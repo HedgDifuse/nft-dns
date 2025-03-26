@@ -107,7 +107,7 @@ void update_ipset(
         struct nlmsghdr *nlh = nftnl_nlmsg_build_hdr(mnl_nlmsg_batch_current(batch),
                                                      NFT_MSG_NEWSETELEM,
                                                      NFPROTO_INET,
-                                                     NLM_F_CREATE | NLM_F_REPLACE,
+                                                     NLM_F_CREATE | NLM_F_EXCL,
                                                      seq++);
 
         nftnl_set_elems_nlmsg_build_payload(nlh, ip4_set);
@@ -120,7 +120,7 @@ void update_ipset(
         struct nlmsghdr *nlh = nftnl_nlmsg_build_hdr(mnl_nlmsg_batch_current(batch),
                                                      NFT_MSG_NEWSETELEM,
                                                      NFPROTO_INET,
-                                                     NLM_F_CREATE | NLM_F_REPLACE,
+                                                     NLM_F_CREATE | NLM_F_EXCL,
                                                      seq++);
 
         nftnl_set_elems_nlmsg_build_payload(nlh, ip6_set);
@@ -138,6 +138,12 @@ void update_ipset(
     mnl_nlmsg_batch_stop(batch);
 
     ssize_t ret;
+
+    const int mnl_fd = mnl_socket_get_fd(nl);
+    if (fcntl(mnl_fd, F_SETFL, fcntl(mnl_fd, F_GETFL) | O_NONBLOCK) < 0) {
+        perror("fcntl mnl_fd");
+        return;
+    }
 
     do {
         ret = mnl_socket_recvfrom(nl, &buf, sizeof(buf));
@@ -222,12 +228,6 @@ int main(const int argc, char *argv[]) {
     const volatile hashset_t domains = hashset_create();
 
     struct mnl_socket *nl = mnl_socket_open(NETLINK_NETFILTER);
-    const int nl_fd = mnl_socket_get_fd(nl);
-
-    if (fcntl(nl_fd, F_SETFL, fcntl(nl_fd, F_GETFL) | O_NONBLOCK) < 0) {
-        perror("fcntl nl_fd");
-        exit(EXIT_FAILURE);
-    }
 
     if (nl == NULL) {
         perror("mnl_socket_open");
