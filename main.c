@@ -107,7 +107,7 @@ void update_ipset(
         struct nlmsghdr *nlh = nftnl_nlmsg_build_hdr(mnl_nlmsg_batch_current(batch),
                                                      NFT_MSG_NEWSETELEM,
                                                      NFPROTO_INET,
-                                                     NLM_F_CREATE | NLM_F_EXCL,
+                                                     NLM_F_CREATE | NLM_F_REPLACE,
                                                      seq++);
 
         nftnl_set_elems_nlmsg_build_payload(nlh, ip4_set);
@@ -120,7 +120,7 @@ void update_ipset(
         struct nlmsghdr *nlh = nftnl_nlmsg_build_hdr(mnl_nlmsg_batch_current(batch),
                                                      NFT_MSG_NEWSETELEM,
                                                      NFPROTO_INET,
-                                                     NLM_F_CREATE | NLM_F_EXCL,
+                                                     NLM_F_CREATE | NLM_F_REPLACE,
                                                      seq++);
 
         nftnl_set_elems_nlmsg_build_payload(nlh, ip6_set);
