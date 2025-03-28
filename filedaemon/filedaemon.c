@@ -2,7 +2,10 @@
 // Created by HedgDifuse on 10.10.2024.
 //
 #include "filedaemon.h"
-#include "../hash/hash.h"
+
+#include <ctype.h>
+
+#include "../str/str.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>

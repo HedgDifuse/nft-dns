@@ -16,7 +16,7 @@
 #include "dns_packet/dns_parse_utils.h"
 #include "dns_socket/dns_socket.h"
 #include "filedaemon/filedaemon.h"
-#include "hash/hash.h"
+#include "str/str.h"
 #include "hashset/hashset.h"
 
 static bool debug = false;
@@ -39,7 +39,7 @@ bool add_to_ipset(
 ) {
     if (answer.type != A && answer.type != AAAA) return false;
 
-    char *domain = cname != NULL ? cname->domain : answer.domain;
+    const char *domain = cname != NULL ? cname->domain : answer.domain;
     if (domain == NULL) return false;
 
     bool can_process = hashset_is_member(*domains, strhash(domain));
@@ -332,7 +332,7 @@ int main(const int argc, char *argv[]) {
                     unsigned char msg[DNS_PACKET_MAX_LENGTH];
 
                     if ((received = read(events[i].data.fd, msg, sizeof(msg))) == -1) {
-                        if (errno != EAGAIN) {
+                        if (errno != EAGAIN && errno != ECONNREFUSED) {
                             perror("upstream recv: ");
                             fprintf(stderr, "upstream recv: %d\n", errno);
                         }
@@ -537,13 +537,14 @@ int main(const int argc, char *argv[]) {
 
                     if (write(is_tcp ? upstream_client_socket : upstream_udp_socket, msg, received) < 0) {
                         if (errno == EAGAIN && is_tcp) continue;
-                        if (errno == EPIPE && is_tcp) {
+                        if ((errno == EPIPE || errno == EBADF) && is_tcp) {
                             close(upstream_client_socket);
                             remove_fd_from_epoll(upstream_client_socket, epfd);
                             upstreams_per_client[listen_socket % (MAX_CONNECTIONS * 2)] = -1;
 
                             continue;
                         }
+
                         if (errno == EBADF && !is_tcp) {
                             close(upstream_udp_socket);
                             remove_fd_from_epoll(upstream_udp_socket, epfd);
