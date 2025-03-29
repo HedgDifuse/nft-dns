@@ -2,7 +2,10 @@
 // Created by HedgDifuse on 10.10.2024.
 //
 #include "filedaemon.h"
-#include "../hash/hash.h"
+
+#include <ctype.h>
+
+#include "../str/str.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -33,6 +36,8 @@ static char *url_only(const char *input, const size_t length) {
 
 _Noreturn void domains_daemon(const volatile hashset_t *domains) {
     printf("Start domains reading...\n");
+
+    nice(19);
 
     unsigned long previous_size = 0;
     time_t prev_mtim = 0;

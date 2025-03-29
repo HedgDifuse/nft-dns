@@ -11,17 +11,19 @@
 #include <sys/socket.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <sys/select.h>
+
 #include "dns_packet/dns_parse_utils.h"
 #include "dns_socket/dns_socket.h"
 #include "filedaemon/filedaemon.h"
-#include "hash/hash.h"
+#include "str/str.h"
 #include "hashset/hashset.h"
 
 static bool debug = false;
 
 static const struct option options[] = {
     {"listen", true, NULL, 0},
-    {"upstream", true, NULL, 0},
+    {"dns", true, NULL, 0},
     {"ip4_set", true, NULL, 0},
     {"ip6_set", true, NULL, 0},
     {"debug", false, NULL, 0},
@@ -37,7 +39,7 @@ bool add_to_ipset(
 ) {
     if (answer.type != A && answer.type != AAAA) return false;
 
-    char *domain = cname != NULL ? cname->domain : answer.domain;
+    const char *domain = cname != NULL ? cname->domain : answer.domain;
     if (domain == NULL) return false;
 
     bool can_process = hashset_is_member(*domains, strhash(domain));
@@ -57,6 +59,7 @@ bool add_to_ipset(
 
             if (hashset_is_member(*domains, strhash(domain + i))) {
                 can_process = true;
+                break;
             }
         }
     }
@@ -104,7 +107,7 @@ void update_ipset(
         struct nlmsghdr *nlh = nftnl_nlmsg_build_hdr(mnl_nlmsg_batch_current(batch),
                                                      NFT_MSG_NEWSETELEM,
                                                      NFPROTO_INET,
-                                                     NLM_F_APPEND,
+                                                     NLM_F_CREATE | NLM_F_REPLACE,
                                                      seq++);
 
         nftnl_set_elems_nlmsg_build_payload(nlh, ip4_set);
@@ -117,7 +120,7 @@ void update_ipset(
         struct nlmsghdr *nlh = nftnl_nlmsg_build_hdr(mnl_nlmsg_batch_current(batch),
                                                      NFT_MSG_NEWSETELEM,
                                                      NFPROTO_INET,
-                                                     NLM_F_APPEND,
+                                                     NLM_F_CREATE | NLM_F_REPLACE,
                                                      seq++);
 
         nftnl_set_elems_nlmsg_build_payload(nlh, ip6_set);
@@ -135,6 +138,12 @@ void update_ipset(
     mnl_nlmsg_batch_stop(batch);
 
     ssize_t ret;
+
+    const int mnl_fd = mnl_socket_get_fd(nl);
+    if (fcntl(mnl_fd, F_SETFL, fcntl(mnl_fd, F_GETFL) | O_NONBLOCK) < 0) {
+        perror("fcntl mnl_fd");
+        return;
+    }
 
     do {
         ret = mnl_socket_recvfrom(nl, &buf, sizeof(buf));
@@ -219,12 +228,6 @@ int main(const int argc, char *argv[]) {
     const volatile hashset_t domains = hashset_create();
 
     struct mnl_socket *nl = mnl_socket_open(NETLINK_NETFILTER);
-    const int nl_fd = mnl_socket_get_fd(nl);
-
-    if (fcntl(nl_fd, F_SETFL, fcntl(nl_fd, F_GETFL) | O_NONBLOCK) < 0) {
-        perror("fcntl nl_fd");
-        exit(EXIT_FAILURE);
-    }
 
     if (nl == NULL) {
         perror("mnl_socket_open");
@@ -238,14 +241,16 @@ int main(const int argc, char *argv[]) {
 
     make_domains_daemon(&domains);
 
-    struct dns_request_payload request_payloads[0x10000] = { [0 ... 0x9999] = {-1}};
+    struct dns_request_payload request_tcp_payloads[MAX_CONNECTIONS * 2] = {[0 ... 499] = {-1}};
+    struct dns_request_payload request_udp_payloads[0x10000] = {[0 ... 0xFFFF] = {-1 }};
 
-    int upstreams_per_client[MAX_CONNECTIONS * 2] = {  [0 ... 499] = -1 };
+    int upstreams_per_client[MAX_CONNECTIONS * 2] = {[0 ... 499] = -1};
     const int epfd = epoll_create1(0);
 
     const int listen_udp_socket = make_dns_socket(listen_ip_addr, true, true, false),
-            listen_tcp_socket = make_dns_socket(listen_ip_addr, true, true, true),
-            upstream_udp_socket = make_dns_socket(upstream_ip_addr, false, true, false);
+            listen_tcp_socket = make_dns_socket(listen_ip_addr, true, true, true);
+
+    int upstream_udp_socket = make_dns_socket(upstream_ip_addr, false, true, false);
 
     if (add_fd_to_epoll(listen_udp_socket, epfd,
                         EPOLLIN | EPOLLET) == -1) {
@@ -254,7 +259,7 @@ int main(const int argc, char *argv[]) {
     }
 
     if (add_fd_to_epoll(listen_tcp_socket, epfd,
-                        EPOLLIN | EPOLLOUT) == -1) {
+                        EPOLLIN) == -1) {
         perror("epoll_ctl EPOLL_CTL_ADD listen");
         exit(EXIT_FAILURE);
     }
@@ -285,31 +290,49 @@ int main(const int argc, char *argv[]) {
                 events[i].events & EPOLLHUP ||
                 events[i].events & EPOLLRDHUP
             ) {
-                close(events[i].data.fd);
-                remove_fd_from_epoll(events[i].data.fd, epfd);
-
                 if (FD_ISSET(events[i].data.fd, &tcp_upstream_fds)) {
+                    close(events[i].data.fd);
                     FD_CLR(events[i].data.fd, &tcp_upstream_fds);
-                } else if (FD_ISSET(events[i].data.fd, &tcp_client_fds)) {
-                    int upstream_sock = upstreams_per_client[events[i].data.fd % (MAX_CONNECTIONS * 2)];
+                    remove_fd_from_epoll(events[i].data.fd, epfd);
 
-                    close(upstream_sock);
-                    remove_fd_from_epoll(upstream_sock, epfd);
+                    struct dns_request_payload payload = request_tcp_payloads[
+                        events[i].data.fd % (MAX_CONNECTIONS * 2)];
+                    if (payload.listen_sock != -1) {
+                        close(payload.listen_sock);
+                        remove_fd_from_epoll(payload.listen_sock, epfd);
+                        FD_CLR(payload.listen_sock, &tcp_client_fds);
+                        request_tcp_payloads[events[i].data.fd % (MAX_CONNECTIONS * 2)] = (struct dns_request_payload){ -1 };
+                        current_tcp_clients_size--;
+                    }
+
+                    continue;
+                }
+                if (FD_ISSET(events[i].data.fd, &tcp_client_fds) && (events[i].events & EPOLLRDHUP) == 0) {
+                    const int upstream_sock = upstreams_per_client[events[i].data.fd % (MAX_CONNECTIONS * 2)];
 
                     FD_CLR(upstream_sock, &tcp_upstream_fds);
                     FD_CLR(events[i].data.fd, &tcp_client_fds);
-                    current_tcp_clients_size--;
-                }
 
-                continue;
+                    close(events[i].data.fd);
+                    close(upstream_sock);
+
+                    request_tcp_payloads[upstream_sock % (MAX_CONNECTIONS * 2)] = (struct dns_request_payload){ -1 };
+
+                    remove_fd_from_epoll(upstream_sock, epfd);
+                    remove_fd_from_epoll(events[i].data.fd, epfd);
+
+                    current_tcp_clients_size--;
+
+                    continue;
+                }
             }
 
             if (events[i].data.fd == upstream_udp_socket || FD_ISSET(events[i].data.fd, &tcp_upstream_fds)) {
                 do {
                     unsigned char msg[DNS_PACKET_MAX_LENGTH];
 
-                    if ((received = read(events[i].data.fd, &msg, sizeof(msg))) == -1) {
-                        if (errno != EAGAIN) {
+                    if ((received = read(events[i].data.fd, msg, sizeof(msg))) == -1) {
+                        if (errno != EAGAIN && errno != ECONNREFUSED) {
                             perror("upstream recv: ");
                             fprintf(stderr, "upstream recv: %d\n", errno);
                         }
@@ -324,27 +347,58 @@ int main(const int argc, char *argv[]) {
                         fprintf(stderr, "\n");
                     }
 
-                    if (received == 0) break;
+                    if (received <= 2) break;
 
                     const int offset = FD_ISSET(events[i].data.fd, &tcp_upstream_fds) ? 2 : 0;
 
                     struct dns_packet packet = {};
-                    if (request_payloads[msg[offset] * 0x100 + msg[offset + 1]].listen_sock == -1) break;
-                    const struct dns_request_payload payload = request_payloads[msg[offset] * 0x100 + msg[offset + 1]];
+                    struct dns_request_payload payload = FD_ISSET(events[i].data.fd, &tcp_upstream_fds)
+                                                             ? request_tcp_payloads[
+                                                                 events[i].data.fd % (MAX_CONNECTIONS * 2)]
+                                                             : request_udp_payloads[msg[0] * 0x100 + msg[1]];
+
+                    if (payload.listen_sock == -1) break;
 
                     if (dns_packet_parse(received - offset, msg + offset, &packet) != -1) {
-                        struct nftnl_set *ip4_set = nftnl_set_alloc();
-                        struct nftnl_set *ip6_set = nftnl_set_alloc();
-                        size_t ip4_size = 0;
-                        size_t ip6_size = 0;
+                        struct nftnl_set *ip4_set = nftnl_set_alloc(),
+                                        *ip6_set = nftnl_set_alloc();
+                        size_t ip4_size = 0,
+                                ip6_size = 0,
+                                cnames_count = 0;
+
                         const struct dns_answer *cname = NULL;
+
+                        for (size_t j = 0; j < packet.answers_count; j++) {
+                            if (packet.answers[j].type != CNAME) continue;
+
+                            cnames_count++;
+                        }
+
+                        if (cnames_count > 0) {
+                            char* cnames = calloc(cnames_count, sizeof(char));
+
+                            for (size_t j = 0; j < packet.answers_count; j++) {
+                                if (packet.answers[j].type != CNAME) continue;
+
+                                cnames[strhash(packet.answers[j].data) % cnames_count] = 1;
+                            }
+
+                            for (size_t j = 0; j < packet.answers_count; j++) {
+                                if (packet.answers[j].type != CNAME) continue;
+                                if (cnames[strhash(packet.answers[j].domain) % cnames_count] == 0) {
+                                    cname = &packet.answers[j];
+                                }
+                            }
+
+                            free(cnames);
+                        }
 
                         for (size_t j = 0; j < packet.answers_count; j++) {
                             if (debug) {
                                 printf("domain: %s, rdata: %s\n", packet.answers[j].domain, packet.answers[j].data);
                             }
 
-                            if (packet.answers[j].type == CNAME) {
+                            if (packet.answers[j].type == CNAME && cname == NULL) {
                                 cname = &packet.answers[j];
                                 continue;
                             }
@@ -352,6 +406,10 @@ int main(const int argc, char *argv[]) {
 
                             struct nftnl_set_elem *set_element = nftnl_set_elem_alloc();
                             const bool ipv4 = packet.answers[j].type == A;
+
+                            if (debug && cname != NULL) {
+                                printf("cname domain: %s : %s\n", cname->domain, cname->data);
+                            }
 
                             if (!add_to_ipset(
                                     &domains,
@@ -380,53 +438,77 @@ int main(const int argc, char *argv[]) {
                     }
                     dns_packet_free(&packet);
 
-                    if (FD_ISSET(events[i].data.fd, &tcp_upstream_fds)) {
-                        if (write(payload.listen_sock, msg, received) < 0) {
-                            perror("send back");
-                        }
-                    } else if (sendto(
+                    if (sendto(
                             payload.listen_sock,
                             msg,
                             received,
                             0,
                             &payload.addr,
                             payload.addr_len) == -1) {
+                        fprintf(stderr, "upstream sendto: %d %d\n", payload.listen_sock, listen_udp_socket);
                         perror("send back");
                     }
 
-                    request_payloads[msg[offset] * 0x100 + msg[offset + 1]] = (payload.next == NULL)
-                                                                                  ? ((struct dns_request_payload){-1})
-                                                                                  : *payload.next;
-                } while (received > 0 && !FD_ISSET(events[i].data.fd, &tcp_upstream_fds));
+                    if (FD_ISSET(events[i].data.fd, &tcp_upstream_fds)) {
+                        request_tcp_payloads[events[i].data.fd % (MAX_CONNECTIONS * 2)] = (payload.next == NULL)
+                            ? ((struct dns_request_payload){-1})
+                            : *payload.next;
+                    } else if (events[i].data.fd == upstream_udp_socket) {
+                        request_udp_payloads[msg[0] * 0x100 + msg[1]] = (payload.next == NULL)
+                                                                            ? ((struct dns_request_payload){-1})
+                                                                            : *payload.next;
+                    }
+
+                    if (FD_ISSET(events[i].data.fd, &tcp_upstream_fds) &&
+                        recv(payload.listen_sock, NULL, sizeof(msg),MSG_PEEK) <= 0
+                    ) {
+                        FD_CLR(events[i].data.fd, &tcp_upstream_fds);
+                        FD_CLR(payload.listen_sock, &tcp_client_fds);
+
+                        request_tcp_payloads[events[i].data.fd % (MAX_CONNECTIONS * 2)] = (struct dns_request_payload){ -1 };
+
+                        close(events[i].data.fd);
+                        close(payload.listen_sock);
+
+                        remove_fd_from_epoll(payload.listen_sock, epfd);
+                        remove_fd_from_epoll(events[i].data.fd, epfd);
+
+                        current_tcp_clients_size--;
+                        break;
+                    }
+                } while (received > 0);
             } else {
                 struct sockaddr client_addr;
                 socklen_t client_addr_len = sizeof(client_addr);
-                int listen_socket = events[i].data.fd, upstream_client_socket = upstreams_per_client[events[i].data.fd % (MAX_CONNECTIONS * 2)];
+                int listen_socket = events[i].data.fd, upstream_client_socket = upstreams_per_client[
+                    events[i].data.fd % (MAX_CONNECTIONS * 2)];
 
                 if (current_tcp_clients_size < MAX_CONNECTIONS && events[i].data.fd == listen_tcp_socket) {
                     const int new_client = accept4(listen_tcp_socket, &client_addr, &client_addr_len, SOCK_NONBLOCK);
 
-                    if (fcntl(new_client, F_SETFL, fcntl(new_client, F_GETFL) | O_NONBLOCK) < 0) {
-                        perror("fcntl");
-                    }
-
                     if (new_client < 0) {
                         if (errno != EAGAIN) perror("accept4: ");
                     } else {
-                        upstream_client_socket = make_dns_socket(upstream_ip_addr, false, true, true);
-                        upstreams_per_client[new_client % (MAX_CONNECTIONS * 2)] = upstream_client_socket;
-
-                        FD_SET(upstream_client_socket, &tcp_upstream_fds);
                         FD_SET(new_client, &tcp_client_fds);
 
                         add_fd_to_epoll(new_client, epfd,
-                                        EPOLLIN | EPOLLPRI | EPOLLERR | EPOLLHUP | EPOLLRDHUP);
-                        add_fd_to_epoll(upstream_client_socket, epfd,
-                                        EPOLLIN | EPOLLPRI | EPOLLERR | EPOLLHUP | EPOLLRDHUP);
+                                        EPOLLIN | EPOLLERR | EPOLLRDHUP | EPOLLHUP);
 
                         current_tcp_clients_size++;
                         listen_socket = new_client;
                     }
+                }
+
+                if (FD_ISSET(listen_socket, &tcp_client_fds) && upstream_client_socket == -1) {
+                    upstream_client_socket = make_dns_socket(upstream_ip_addr, false, true, true);
+                    upstreams_per_client[listen_socket % (MAX_CONNECTIONS * 2)] = upstream_client_socket;
+                    request_tcp_payloads[upstream_client_socket % (MAX_CONNECTIONS * 2)] = (struct dns_request_payload){
+                        -1
+                    };
+
+                    FD_SET(upstream_client_socket, &tcp_upstream_fds);
+                    add_fd_to_epoll(upstream_client_socket, epfd,
+                                    EPOLLIN | EPOLLERR | EPOLLRDHUP | EPOLLHUP);
                 }
 
                 const bool is_tcp = events[i].data.fd == listen_tcp_socket || FD_ISSET(listen_socket, &tcp_client_fds);
@@ -434,18 +516,9 @@ int main(const int argc, char *argv[]) {
                 do {
                     unsigned char msg[DNS_PACKET_MAX_LENGTH];
 
-                    if (is_tcp) {
-                        if ((received = recv(listen_socket, msg, sizeof(msg), MSG_PEEK)) == -1) {
-                            if (errno != EAGAIN && errno != ENOTCONN) {
-                                perror("listen recv: ");
-                                fprintf(stderr, "listen recv: %d\n", errno);
-                            }
-
-                            break;
-                        }
-                    } else if ((received = recvfrom(listen_socket, msg, sizeof(msg), 0,
-                                                    &client_addr,
-                                                    &client_addr_len)) == -1) {
+                    if ((received = recvfrom(listen_socket, msg, sizeof(msg), MSG_PEEK,
+                                             &client_addr,
+                                             &client_addr_len)) == -1) {
                         if (errno != EAGAIN && errno != ENOTCONN) {
                             perror("listen recv: ");
                             fprintf(stderr, "listen recv: %d\n", errno);
@@ -454,28 +527,76 @@ int main(const int argc, char *argv[]) {
                         break;
                     }
 
+                    if (debug) {
+                        fprintf(stderr, "query: %lu \n", received);
+                        for (int j = 0; j < received; j++) {
+                            fprintf(stderr, "%02x ", msg[j]);
+                        }
+                        fprintf(stderr, "\n");
+                    }
+
                     if (write(is_tcp ? upstream_client_socket : upstream_udp_socket, msg, received) < 0) {
                         if (errno == EAGAIN && is_tcp) continue;
+                        if ((errno == EPIPE || errno == EBADF) && is_tcp) {
+                            close(upstream_client_socket);
+                            remove_fd_from_epoll(upstream_client_socket, epfd);
+                            upstreams_per_client[listen_socket % (MAX_CONNECTIONS * 2)] = -1;
 
-                        perror("send upstream udp");
-                        if (is_tcp) recv(listen_socket, msg, sizeof(msg), 0);
+                            continue;
+                        }
+
+                        if (errno == EBADF && !is_tcp) {
+                            close(upstream_udp_socket);
+                            remove_fd_from_epoll(upstream_udp_socket, epfd);
+
+                            upstream_udp_socket = make_dns_socket(upstream_ip_addr, false, true, false);
+                            if (add_fd_to_epoll(upstream_udp_socket, epfd,
+                                                EPOLLIN | EPOLLET) == -1) {
+                                perror("epoll_ctl EPOLL_CTL_ADD listen");
+                                exit(EXIT_FAILURE);
+                            }
+                            continue;
+                        }
+
+                        perror("send upstream");
+                        recv(listen_socket, msg, sizeof(msg), 0);
 
                         continue;
                     }
-
-                    const int offset = is_tcp ? 2 : 0;
 
                     struct dns_request_payload new_payload = {
                         listen_socket, client_addr_len, client_addr, NULL
                     };
 
-                    if (request_payloads[msg[offset] * 0x100 + msg[offset + 1]].listen_sock != -1) {
-                        request_payloads[msg[offset] * 0x100 + msg[offset + 1]].next = &new_payload;
+                    struct dns_request_payload request_payload;
+
+                    if (is_tcp) {
+                        request_payload = request_tcp_payloads[upstream_client_socket % (MAX_CONNECTIONS * 2)];
+
+                        if (request_payload.listen_sock == -1) {
+                            request_tcp_payloads[upstream_client_socket % (MAX_CONNECTIONS * 2)] = new_payload;
+                        } else {
+                            while (request_payload.next != NULL) {
+                                request_payload = *request_payload.next;
+                            }
+                            request_payload.next = &new_payload;
+                        }
+                    } else {
+                        request_payload = request_udp_payloads[msg[0] * 0x100 + msg[1]];
+
+                        if (request_payload.listen_sock == -1) {
+                            request_udp_payloads[msg[0] * 0x100 + msg[1]] = new_payload;
+                        } else {
+                            while (request_payload.next != NULL) {
+                                request_payload = *request_payload.next;
+                            }
+
+                            request_payload.next = &new_payload;
+                        }
                     }
 
-                    request_payloads[msg[offset] * 0x100 + msg[offset + 1]] = new_payload;
-                    if (is_tcp) recv(listen_socket, msg, sizeof(msg), 0);
-                } while (received > 0 && !is_tcp);
+                    recv(listen_socket, msg, sizeof(msg), 0);
+                } while (received > 0);
             }
         }
     }
