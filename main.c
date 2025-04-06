@@ -22,12 +22,12 @@
 static bool debug = false;
 
 static const struct option options[] = {
-    {"listen", true, NULL, 0},
-    {"dns", true, NULL, 0},
-    {"ip4_set", true, NULL, 0},
-    {"ip6_set", true, NULL, 0},
-    {"debug", false, NULL, 0},
-    {NULL, 0, NULL, 0}
+    {"listen", true, NULL, 'l'},
+    {"dns", true, NULL, 'd'},
+    {"ip4_set", true, NULL, '4'},
+    {"ip6_set", true, NULL, '6'},
+    {"debug", false, NULL, 'D'},
+    {0}
 };
 
 bool add_to_ipset(
@@ -188,39 +188,55 @@ int remove_fd_from_epoll(const int fd, const int epfd) {
 }
 
 int main(const int argc, char *argv[]) {
-    int option_index = 0;
-
     char *listen_ip_addr = NULL,
             *upstream_ip_addr = NULL;
 
     const char *ipv6_name = NULL,
             *ipv4_name = NULL;
 
-    while (getopt_long(argc, argv, "l:u:f:s:d", options, &option_index) >= 0) {
-        switch (option_index) {
-            case 0:
+    int optc = sizeof(options)/sizeof(*options);
+    for (int i = 0, e = optc; i < e; i++)
+        optc += options[i].has_arg;
+
+    char opt[optc + 1];
+    opt[optc] = 0;
+
+    for (int i = 0, o = 0; o < optc; i++, o++) {
+        opt[o] = options[i].val;
+        for (int c = options[i].has_arg; c; c--) {
+            o++;
+            opt[o] = ':';
+        }
+    }
+
+    int option_char;
+    bool invalid = false;
+
+    while (!invalid && (option_char = getopt_long(argc, argv, opt, options, NULL)) != -1) {
+        switch (option_char) {
+            case 'l':
                 listen_ip_addr = optarg;
                 break;
-            case 1:
+            case 'd':
                 upstream_ip_addr = optarg;
                 break;
-            case 2:
+            case '4':
                 ipv4_name = optarg;
                 break;
-            case 3:
+            case '6':
                 ipv6_name = optarg;
                 break;
-            case 4:
+            case 'D':
                 debug = true;
                 break;
             default:
+                invalid = true;
                 break;
         }
     }
 
-    if (listen_ip_addr == NULL || upstream_ip_addr == NULL) {
-        fprintf(
-            stderr,
+    if (listen_ip_addr == NULL || upstream_ip_addr == NULL || invalid) {
+        fprintf(stderr,
             "Usage: nft-dns --listen addr[:port] --dns addr[:port] --ip4_set name --ip6_set name [--debug]\n");
         exit(EXIT_FAILURE);
     }
