@@ -22,5 +22,6 @@ add_executable(nft-dns
         dns_packet/dns_parse_utils.c
         dns_socket/dns_socket.h
         dns_socket/dns-socket.c
+        main.c
 )
 install(TARGETS nft-dns DESTINATION /usr/bin)
