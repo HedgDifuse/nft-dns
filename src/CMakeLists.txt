@@ -1,5 +1,7 @@
 cmake_minimum_required(VERSION 3.1...3.27)
-project(nft-dns C)
+project(nft-dns
+        VERSION 1.0
+        LANGUAGES C)
 
 set(CMAKE_C_STANDARD 23)
 
@@ -8,7 +10,7 @@ link_directories($ENV{TARGET_DIR}/usr/lib)
 
 link_libraries(nftnl mnl)
 
-add_executable(nft-dns main.c
+add_executable(nft-dns
         hashset/hashset.h
         hashset/hashset.c
         filedaemon/filedaemon.h
@@ -21,3 +23,4 @@ add_executable(nft-dns main.c
         dns_socket/dns_socket.h
         dns_socket/dns-socket.c
 )
+install(TARGETS nft-dns DESTINATION /usr/bin)
