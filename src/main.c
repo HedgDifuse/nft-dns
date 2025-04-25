@@ -18,6 +18,7 @@
 #include "filedaemon/filedaemon.h"
 #include "str/str.h"
 #include "hashset/hashset.h"
+#include "structs/map.h"
 
 static bool debug = false;
 
@@ -42,27 +43,26 @@ bool add_to_ipset(
     const char *domain = cname != NULL ? cname->domain : answer.domain;
     if (domain == NULL) return false;
 
-    bool can_process = hashset_is_member(*domains, strhash(domain));
-    char *dot_start_domain = calloc(strlen(domain) + 2, sizeof(char));
+    char *dot_start_domain = calloc(sizeof(domain) + 1, sizeof(char));
 
     strcpy(dot_start_domain + 1, domain);
     dot_start_domain[0] = '.';
 
-    if (!can_process) {
-        can_process = hashset_is_member(*domains, strhash(dot_start_domain));
-    }
-    free(dot_start_domain);
+    bool can_process = hashset_is_member(*domains, strhash(dot_start_domain));
 
     if (!can_process) {
-        for (size_t i = 1; i < strlen(domain); i++) {
-            if (domain[i] != '.') continue;
+        for (size_t i = 0; i < strlen(dot_start_domain); i++) {
+            if (i > 0 && dot_start_domain[i] != '.') continue;
 
-            if (hashset_is_member(*domains, strhash(domain + i))) {
+            if (hashset_is_member(*domains, strhash(dot_start_domain + i))
+                || (i == 0 && hashset_is_member(*domains, strhash(dot_start_domain + i + 1)))
+            ) {
                 can_process = true;
                 break;
             }
         }
     }
+    free(dot_start_domain);
     if (!can_process) return false;
 
     union nf_inet_addr ip;
@@ -242,6 +242,7 @@ int main(const int argc, char *argv[]) {
     }
 
     const volatile hashset_t domains = hashset_create();
+    const volatile struct map aliases = {};
 
     struct mnl_socket *nl = mnl_socket_open(NETLINK_NETFILTER);
 
@@ -255,7 +256,7 @@ int main(const int argc, char *argv[]) {
         exit(EXIT_FAILURE);
     }
 
-    make_domains_daemon(&domains);
+    make_domains_daemon(&(volatile struct daemon_params) { &domains, &aliases });
 
     struct dns_request_payload request_tcp_payloads[MAX_CONNECTIONS * 2] = {[0 ... 499] = {-1}};
     struct dns_request_payload request_udp_payloads[0x10000] = {[0 ... 0xFFFF] = {-1 }};
@@ -375,7 +376,7 @@ int main(const int argc, char *argv[]) {
 
                     if (payload.listen_sock == -1) break;
 
-                    if (dns_packet_parse(received - offset, msg + offset, &packet) != -1) {
+                    if (dns_packet_decode(received - offset, msg + offset, &packet)) {
                         struct nftnl_set *ip4_set = nftnl_set_alloc(),
                                         *ip6_set = nftnl_set_alloc();
                         size_t ip4_size = 0,
@@ -550,6 +551,8 @@ int main(const int argc, char *argv[]) {
                         }
                         fprintf(stderr, "\n");
                     }
+
+
 
                     if (write(is_tcp ? upstream_client_socket : upstream_udp_socket, msg, received) < 0) {
                         if (errno == EAGAIN && is_tcp) continue;

@@ -150,13 +150,12 @@ size_t merge_octets(const size_t count, const unsigned char octets[], size_t *in
     return result;
 }
 
-int dns_packet_parse(size_t packet_length, const  unsigned char raw_packet[], struct dns_packet *result) {
-    if (packet_length < 13) return -1;
+bool dns_packet_decode(const size_t packet_length, const  unsigned char raw_packet[], struct dns_packet *result) {
+    if (packet_length < 13) return false;
 
-    result->transaction_id[0] = raw_packet[0];
-    result->transaction_id[1] = raw_packet[1];
+    result->transaction_id = merge_octets(2, raw_packet, NULL);
 
-    size_t flags = merge_octets(2, raw_packet + 2, NULL);
+    const size_t flags = merge_octets(2, raw_packet + 2, NULL);
 
     result->return_code = flags & 0b1111;
     result->recursion_support = (flags >> 7) & 0b1;
@@ -168,8 +167,8 @@ int dns_packet_parse(size_t packet_length, const  unsigned char raw_packet[], st
 
     result->questions_count = merge_octets(2, raw_packet + 4, NULL);
     result->answers_count = merge_octets(2, raw_packet + 6, NULL);
-    unsigned short ns_count = raw_packet[8] * 0x100 + raw_packet[9];
-    unsigned short ar_count = raw_packet[10] * 0x100 + raw_packet[11];
+    result->authority_count = merge_octets(2, raw_packet + 8, NULL);
+    result->additional_count = merge_octets(2, raw_packet + 10, NULL);
 
     size_t i = 12;
 
@@ -208,7 +207,7 @@ int dns_packet_parse(size_t packet_length, const  unsigned char raw_packet[], st
         i++;
     }
 
-    return 0;
+    return true;
 }
 
 void dns_packet_free(const struct dns_packet *packet) {

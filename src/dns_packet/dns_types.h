@@ -1,6 +1,7 @@
 #pragma once
-#include "stdbool.h"
+
 #include "limits.h"
+#include "stdbool.h"
 
 #ifndef NFT_DNS_TYPES_H
 #define NFT_DNS_TYPES_H
@@ -42,7 +43,7 @@ struct dns_answer {
 };
 
 struct dns_packet {
-    unsigned char transaction_id[2];
+    unsigned short transaction_id;
     bool is_answer;
     unsigned char opcode;
     bool server_in_priority;
@@ -53,6 +54,8 @@ struct dns_packet {
 
     unsigned short questions_count;
     unsigned short answers_count;
+    unsigned short authority_count;
+    unsigned short additional_count;
 
     struct dns_question *questions;
     struct dns_answer *answers;

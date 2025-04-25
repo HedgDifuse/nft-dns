@@ -14,8 +14,7 @@ include $(INCLUDE_DIR)/package.mk
 include $(INCLUDE_DIR)/cmake.mk
 
 define Package/nft-dns
-  SECTION:=network
-  CATEGORY:=Utilities
+  CATEGORY:=custom
   TITLE:=Simple local dns-forwarder for intercept dns responses
   DEPENDS:=+libnftnl +libmnl
 endef

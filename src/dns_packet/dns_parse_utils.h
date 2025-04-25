@@ -22,10 +22,15 @@ char *dns_parse_rdata(
     unsigned short type
 );
 
-int dns_packet_parse(
+bool dns_packet_decode(
     size_t packet_length,
     const unsigned char raw_packet[],
     struct dns_packet *result
+);
+
+unsigned char *dns_packet_encode(
+    struct dns_packet packet,
+    size_t *packet_size
 );
 
 void dns_packet_free(const struct dns_packet *packet);
