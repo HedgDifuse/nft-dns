@@ -1,4 +1,5 @@
 #include <ctype.h>
+#include <string.h>
 //
 // Created by HedgDifuse on 15.11.2024.
 //

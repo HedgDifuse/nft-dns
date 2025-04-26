@@ -3,18 +3,15 @@ include $(TOPDIR)/rules.mk
 PKG_NAME:=nft-dns
 PKG_VERSION:=1.0
 PKG_RELEASE:=1
-PKG_SOURCE_URL:=https://github.com/hedgdifuse/nft-dns.git
-PKG_SOURCE_BRANCH:=github/master
-PKG_SOURCE_PROTO:=git
-PKG_SOURCE:=$(PKG_NAME)-$(PKG_VERSION).tar.xz
-PKG_SOURCE_SUBDIR:=$(PKG_NAME)-$(PKG_VERSION).$(PKG_RELEASE)
-PKG_BUILD_DIR:=$(BUILD_DIR)/$(PKG_SOURCE_SUBDIR)
+
+SOURCE_DIR:=./src
+PKG_BUILD_DIR:=$(BUILD_DIR)/nft-dns-$(PKG_VERSION)
 
 include $(INCLUDE_DIR)/package.mk
 include $(INCLUDE_DIR)/cmake.mk
 
 define Package/nft-dns
-  CATEGORY:=custom
+  CATEGORY:=base
   TITLE:=Simple local dns-forwarder for intercept dns responses
   DEPENDS:=+libnftnl +libmnl
 endef

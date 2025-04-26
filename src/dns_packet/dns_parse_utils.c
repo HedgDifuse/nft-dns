@@ -210,6 +210,13 @@ bool dns_packet_decode(const size_t packet_length, const  unsigned char raw_pack
     return true;
 }
 
+unsigned char *dns_packet_encode(
+    struct dns_packet packet,
+    size_t *packet_size
+) {
+
+}
+
 void dns_packet_free(const struct dns_packet *packet) {
     for (int i = 0; i < packet->questions_count; i++) {
         free(packet->questions[i].domain);

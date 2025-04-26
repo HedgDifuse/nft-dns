@@ -52,7 +52,7 @@ bool update_domains(const volatile hashset_t *domains, time_t *domains_mtim) {
 
     hashset_clean(*domains);
 
-    char *line;
+    char *line = NULL;
     size_t line_l = 0;
 
     while(getline(&line, &line_l, file) != -1) {

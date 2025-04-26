@@ -7,17 +7,11 @@
 #ifndef MAP_H
 #define MAP_H
 
-#import "stdlib.h"
+#include "stdlib.h"
 
 struct map {
-    struct map_entry* entries;
+    void **pointer;
     size_t size;
-};
-
-struct map_entry {
-    struct map_entry *next;
-    size_t key_hash;
-    void* value;
 };
 
 void *map_get(const struct map *map, size_t key_hash);

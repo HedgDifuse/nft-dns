@@ -90,12 +90,6 @@ void update_ipset(
     const char *ipv4_name,
     const char *ipv6_name
 ) {
-    nftnl_set_set_str(ip4_set, NFTNL_SET_TABLE, "fw4");
-    nftnl_set_set_str(ip4_set, NFTNL_SET_NAME, ipv4_name);
-
-    nftnl_set_set_str(ip6_set, NFTNL_SET_TABLE, "fw4");
-    nftnl_set_set_str(ip6_set, NFTNL_SET_NAME, ipv6_name);
-
     int buf[MNL_SOCKET_BUFFER_SIZE];
     int seq = 0;
 
@@ -103,7 +97,10 @@ void update_ipset(
     nftnl_batch_begin(mnl_nlmsg_batch_current(batch), seq++);
     mnl_nlmsg_batch_next(batch);
 
-    if (ip4_size > 0) {
+    if (ip4_size > 0 && ipv4_name != NULL) {
+        nftnl_set_set_str(ip4_set, NFTNL_SET_TABLE, "fw4");
+        nftnl_set_set_str(ip4_set, NFTNL_SET_NAME, ipv4_name);
+
         struct nlmsghdr *nlh = nftnl_nlmsg_build_hdr(mnl_nlmsg_batch_current(batch),
                                                      NFT_MSG_NEWSETELEM,
                                                      NFPROTO_INET,
@@ -115,7 +112,10 @@ void update_ipset(
         mnl_nlmsg_batch_next(batch);
     }
 
-    if (ip6_size > 0) {
+    if (ip6_size > 0 && ipv6_name != NULL) {
+        nftnl_set_set_str(ip6_set, NFTNL_SET_TABLE, "fw4");
+        nftnl_set_set_str(ip6_set, NFTNL_SET_NAME, ipv6_name);
+
         if (ip4_size > 0) nftnl_batch_end(mnl_nlmsg_batch_current(batch), seq);
         struct nlmsghdr *nlh = nftnl_nlmsg_build_hdr(mnl_nlmsg_batch_current(batch),
                                                      NFT_MSG_NEWSETELEM,

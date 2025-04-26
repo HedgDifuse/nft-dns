@@ -7,32 +7,25 @@
 #include <string.h>
 
 void *map_get(const struct map *map, const size_t key_hash) {
-    struct map_entry entry = map->entries[key_hash % map->size];
-
-    while (entry.key_hash != key_hash) {
-        entry = *entry.next;
-    }
-
-    return entry.value;
+    return map->pointer[key_hash % map->size];
 }
 
 void *map_put(struct map *map, const size_t key_hash, const void* value) {
-    map->size++;
-    map->entries = realloc(map->entries, sizeof(struct map_entry) * map->size);
-
-    for (size_t i = 0; i < map->size; i++) {
-        const struct map_entry entry = map->entries[i];
-        map->entries[entry.key_hash % map->size] = entry;
-    }
-
+    map->pointer[key_hash % map->size] = value;
 
     return value;
 }
 
 void map_init(struct map *map, const size_t size) {
-
+    map->pointer = calloc(size, sizeof(void*));
+    map->size = size;
 }
 
 void map_clear(struct map *map) {
-
+    for (size_t i = 0; i < map->size; i++) {
+        free(map->pointer[i]);
+    }
+    map->size = 0;
+    free(map->pointer);
+    map->pointer = NULL;
 }
