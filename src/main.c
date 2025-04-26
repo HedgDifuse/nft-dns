@@ -43,7 +43,7 @@ bool add_to_ipset(
     const char *domain = cname != NULL ? cname->domain : answer.domain;
     if (domain == NULL) return false;
 
-    char *dot_start_domain = calloc(sizeof(domain) + 1, sizeof(char));
+    char *dot_start_domain = calloc(strlen(domain) + 2, sizeof(char));
 
     strcpy(dot_start_domain + 1, domain);
     dot_start_domain[0] = '.';
@@ -194,7 +194,7 @@ int main(const int argc, char *argv[]) {
     const char *ipv6_name = NULL,
             *ipv4_name = NULL;
 
-    int optc = sizeof(options)/sizeof(*options);
+    int optc = sizeof(options) / sizeof(*options);
     for (int i = 0, e = optc; i < e; i++)
         optc += options[i].has_arg;
 
@@ -237,7 +237,7 @@ int main(const int argc, char *argv[]) {
 
     if (listen_ip_addr == NULL || upstream_ip_addr == NULL || invalid) {
         fprintf(stderr,
-            "Usage: nft-dns --listen addr[:port] --dns addr[:port] --ip4_set name --ip6_set name [--debug]\n");
+                "Usage: nft-dns --listen addr[:port] --dns addr[:port] --ip4_set name --ip6_set name [--debug]\n");
         exit(EXIT_FAILURE);
     }
 
@@ -256,10 +256,10 @@ int main(const int argc, char *argv[]) {
         exit(EXIT_FAILURE);
     }
 
-    make_domains_daemon(&(volatile struct daemon_params) { &domains, &aliases });
+    make_domains_daemon(&(volatile struct daemon_params){&domains, &aliases});
 
     struct dns_request_payload request_tcp_payloads[MAX_CONNECTIONS * 2] = {[0 ... 499] = {-1}};
-    struct dns_request_payload request_udp_payloads[0x10000] = {[0 ... 0xFFFF] = {-1 }};
+    struct dns_request_payload request_udp_payloads[0x10000] = {[0 ... 0xFFFF] = {-1}};
 
     int upstreams_per_client[MAX_CONNECTIONS * 2] = {[0 ... 499] = -1};
     const int epfd = epoll_create1(0);
@@ -318,7 +318,9 @@ int main(const int argc, char *argv[]) {
                         close(payload.listen_sock);
                         remove_fd_from_epoll(payload.listen_sock, epfd);
                         FD_CLR(payload.listen_sock, &tcp_client_fds);
-                        request_tcp_payloads[events[i].data.fd % (MAX_CONNECTIONS * 2)] = (struct dns_request_payload){ -1 };
+                        request_tcp_payloads[events[i].data.fd % (MAX_CONNECTIONS * 2)] = (struct dns_request_payload){
+                            -1
+                        };
                         current_tcp_clients_size--;
                     }
 
@@ -333,7 +335,7 @@ int main(const int argc, char *argv[]) {
                     close(events[i].data.fd);
                     close(upstream_sock);
 
-                    request_tcp_payloads[upstream_sock % (MAX_CONNECTIONS * 2)] = (struct dns_request_payload){ -1 };
+                    request_tcp_payloads[upstream_sock % (MAX_CONNECTIONS * 2)] = (struct dns_request_payload){-1};
 
                     remove_fd_from_epoll(upstream_sock, epfd);
                     remove_fd_from_epoll(events[i].data.fd, epfd);
@@ -378,7 +380,7 @@ int main(const int argc, char *argv[]) {
 
                     if (dns_packet_decode(received - offset, msg + offset, &packet)) {
                         struct nftnl_set *ip4_set = nftnl_set_alloc(),
-                                        *ip6_set = nftnl_set_alloc();
+                                *ip6_set = nftnl_set_alloc();
                         size_t ip4_size = 0,
                                 ip6_size = 0,
                                 cnames_count = 0;
@@ -392,7 +394,7 @@ int main(const int argc, char *argv[]) {
                         }
 
                         if (cnames_count > 0) {
-                            char* cnames = calloc(cnames_count, sizeof(char));
+                            char *cnames = calloc(cnames_count, sizeof(char));
 
                             for (size_t j = 0; j < packet.answers_count; j++) {
                                 if (packet.answers[j].type != CNAME) continue;
@@ -482,7 +484,9 @@ int main(const int argc, char *argv[]) {
                         FD_CLR(events[i].data.fd, &tcp_upstream_fds);
                         FD_CLR(payload.listen_sock, &tcp_client_fds);
 
-                        request_tcp_payloads[events[i].data.fd % (MAX_CONNECTIONS * 2)] = (struct dns_request_payload){ -1 };
+                        request_tcp_payloads[events[i].data.fd % (MAX_CONNECTIONS * 2)] = (struct dns_request_payload){
+                            -1
+                        };
 
                         close(events[i].data.fd);
                         close(payload.listen_sock);
