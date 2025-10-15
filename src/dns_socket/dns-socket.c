@@ -58,11 +58,13 @@ int make_dns_socket(char *address_and_port, const bool self, const bool non_bloc
         constexpr int idle = 1;
         constexpr int interval = 1;
         constexpr int maxpkt = 10;
+        constexpr int reuseaddr = 1;
 
-        if (setsockopt(descriptor, SOL_SOCKET, SO_KEEPALIVE, &keepalive, sizeof(int)) < 0 ||
-            setsockopt(descriptor, IPPROTO_TCP, TCP_KEEPIDLE, &idle, sizeof(int)) < 0 ||
-            setsockopt(descriptor, IPPROTO_TCP, TCP_KEEPINTVL, &interval, sizeof(int)) < 0 ||
-            setsockopt(descriptor, IPPROTO_TCP, TCP_KEEPCNT, &maxpkt, sizeof(int)) < 0
+        if (setsockopt(descriptor, SOL_SOCKET, SO_KEEPALIVE, &keepalive, sizeof(reuse_addr)) < 0 ||
+            setsockopt(descriptor, IPPROTO_TCP, TCP_KEEPIDLE, &idle, sizeof(idle)) < 0 ||
+            setsockopt(descriptor, IPPROTO_TCP, TCP_KEEPINTVL, &interval, sizeof(interval)) < 0 ||
+            setsockopt(descriptor, IPPROTO_TCP, TCP_KEEPCNT, &maxpkt, sizeof(maxpkt)) < 0 ||
+            setsockopt(descriptor, SOL_SOCKET, SO_REUSEADDR, &reuseaddr, sizeof (reuseaddr)) < 0
         ) {
             perror("setsockopt");
             return -1;
@@ -75,7 +77,8 @@ int make_dns_socket(char *address_and_port, const bool self, const bool non_bloc
         exit(EXIT_FAILURE);
     }
     if (!self && connect(descriptor, (const struct sockaddr *) &address, sizeof(address)) < 0) {
-        if (errno != EINPROGRESS) {
+        if (errno != EINPROGRESS && errno != EALREADY && errno != 150) {
+            fprintf(stderr, "connect: %d\n ", errno);
             perror("connect");
             return -1;
         }

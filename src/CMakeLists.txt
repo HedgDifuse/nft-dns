@@ -6,9 +6,6 @@ project(nft-dns
 set(CMAKE_C_STANDARD 23)
 
 include_directories(SYSTEM $ENV{TARGET_DIR}/usr/include)
-link_directories($ENV{TARGET_DIR}/usr/lib)
-
-link_libraries(nftnl mnl)
 
 add_executable(nft-dns
         hashset/hashset.h
@@ -26,4 +23,17 @@ add_executable(nft-dns
         structs/map.c
         structs/map.h
 )
+
+add_compile_options(
+        "-Wall" "-Wpedantic" "-Wextra" "-fexceptions"
+        "-Os"
+)
+
+add_library(nftnl SHARED IMPORTED)
+add_library(mnl SHARED IMPORTED)
+
+set_target_properties(nftnl PROPERTIES IMPORTED_LOCATION $ENV{TARGET_DIR}/usr/lib/libnftnl.so)
+set_target_properties(mnl PROPERTIES IMPORTED_LOCATION $ENV{TARGET_DIR}/usr/lib/libmnl.so)
+
+target_link_libraries(nft-dns nftnl mnl)
 install(TARGETS nft-dns DESTINATION /usr/bin)

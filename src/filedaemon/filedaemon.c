@@ -38,11 +38,16 @@ static char *url_only(const char *input, const size_t length) {
 bool update_domains(const volatile hashset_t *domains, time_t *domains_mtim) {
     struct stat result;
 
-    if (stat(DOMAINS_FILE_PATH, &result) == 0 && result.st_mtim.tv_sec > *domains_mtim) {
-        *domains_mtim = result.st_mtim.tv_sec;
-    } else {
+    if (stat(DOMAINS_FILE_PATH, &result)) {
         return false;
     }
+
+    if (((long) time(NULL) - result.st_mtim.tv_sec) < 5) {
+        *domains_mtim = result.st_mtim.tv_sec;
+        return false;
+    }
+
+    *domains_mtim = result.st_mtim.tv_sec;
 
     FILE *file = fopen(DOMAINS_FILE_PATH, "r");
 
@@ -68,6 +73,8 @@ bool update_domains(const volatile hashset_t *domains, time_t *domains_mtim) {
 
     if (fclose(file)) {
         perror("fclose error");
+    } else if (remove(DOMAINS_FILE_PATH)) {
+        perror("remove error");
     }
 
     return true;

@@ -1,14 +1,12 @@
-#include <ctype.h>
 #include <string.h>
 //
 // Created by HedgDifuse on 15.11.2024.
 //
-unsigned long strhash(const char *str) {
-    unsigned long hash = 5381;
-    int c;
+size_t strhash(const char *str) {
+    size_t hash = 0;
 
-    while ((c = *str++))
-        hash = (hash << 5) + hash + tolower(c); /* hash * 33 + c */
+    for (; *str; ++str)
+        hash ^= *str + 0x9e3779b9 + (hash << 6) + (hash >> 2);
 
     return hash;
 }
